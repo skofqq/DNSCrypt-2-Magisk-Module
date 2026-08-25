@@ -1,7 +1,7 @@
 id=dnscrypt-proxy-android
 name=DNSCrypt-Proxy 2
-version=2.1.18-r2
-versionCode=211802
+version=2.1.18-r3
+versionCode=211803
 author=d3cim (форк с исправлениями)
 description=Шифрованный DNS системного уровня: DNSCrypt v2, DoH, Anonymized DNSCrypt, ODoH. dnscrypt-proxy 2.1.18. Конфиг в /data/adb/dnscrypt-proxy, управление командой dnscrypt-ctl.
 updateJson=https://raw.githubusercontent.com/skofqq/DNSCrypt-2-Magisk-Module/main/update.json

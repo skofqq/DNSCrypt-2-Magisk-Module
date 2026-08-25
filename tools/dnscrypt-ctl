@@ -19,6 +19,7 @@ dnscrypt-ctl <команда>
   stop      остановить прокси и снять правила перехвата
   restart   перезапустить с перечитыванием конфига
   rules     показать цепочку $NAT_CHAIN
+  conflicts кто ещё перехватывает DNS: box_for_magisk, zapret2 и прочие
   log       последние строки журнала модуля
   proxylog  последние строки журнала dnscrypt-proxy
   test      проверить резолвинг через локальный порт
@@ -72,7 +73,7 @@ case "$1" in
   set)
     [ -n "$2" ] && [ -n "$3" ] || { echo "использование: dnscrypt-ctl set <ключ> <значение>"; exit 1; }
     case "$2" in
-      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|mirror_config|restart_delay_max) ;;
+      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|mirror_config|restart_delay_max|run_gid) ;;
       *) echo "неизвестный ключ: $2"; exit 1 ;;
     esac
     touch "$SETTINGS"
@@ -189,6 +190,45 @@ case "$1" in
         exit 1
         ;;
     esac
+    ;;
+  conflicts)
+    nf_init_cmd
+    echo "--- nat/OUTPUT, порядок сверху вниз ---"
+    $IPT -t nat -S OUTPUT 2>/dev/null | grep -v '^-P' | awk '{printf "  %2d  %s\n", NR, $0}'
+    echo
+    echo "--- цепочки, перехватывающие порт 53 ---"
+    for tbl in nat mangle; do
+      for ch in $($IPT -t $tbl -S 2>/dev/null | awk '/^-N /{print $2}'); do
+        [ "$ch" = "$NAT_CHAIN" ] && continue
+        if $IPT -t $tbl -S "$ch" 2>/dev/null | grep -q 'dport 53'; then
+          echo "  $tbl/$ch"
+        fi
+      done
+    done
+    if $IPT -t nat -S "$NAT_CHAIN" >/dev/null 2>&1; then
+      echo "  nat/$NAT_CHAIN (наш)"
+    fi
+    echo
+    echo "--- известные модули ---"
+    if $IPT -t nat -S 2>/dev/null | grep -q 'CLASH_DNS' || $IPT -t mangle -S 2>/dev/null | grep -q 'BOX_'; then
+      echo "  box_for_magisk: обнаружен, он тоже забирает порт 53."
+      echo "    Держать два перехватчика DNS нельзя. Рабочая схема:"
+      echo "    dnscrypt-ctl set redirect_ipv4 false; set redirect_ipv6 off"
+      echo "    и в конфиге clash/sing-box указать сервером 127.0.0.1:$(listen_port)."
+      echo "    Чтобы запросы самого прокси шли мимо box: set run_gid net_admin"
+    else
+      echo "  box_for_magisk: не обнаружен"
+    fi
+    if $IPT -t mangle -S 2>/dev/null | grep -qE 'ZAPRET2_|Z2O_|Z2I_'; then
+      echo "  zapret2: обнаружен. Конфликта нет - он работает в mangle по портам"
+      echo "    80/443 и не трогает 53. Если DNSCrypt-сервер слушает на 443/udp,"
+      echo "    его трафик пойдёт через NFQUEUE, но десинхронизации не подвергнется."
+    else
+      echo "  zapret2: не обнаружен"
+    fi
+    if $IPT6 -S OUTPUT 2>/dev/null | grep -q 'dport 53 -j DROP'; then
+      echo "  кто-то дропает IPv6-DNS (обычно box при ipv6=false) - наш перехват IPv6 бесполезен"
+    fi
     ;;
   *) usage ;;
 esac

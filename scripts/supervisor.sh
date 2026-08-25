@@ -128,7 +128,13 @@ while :; do
 
   started=$(date +%s)
   cd "$DATADIR" || exit 1
-  "$BIN" -config "$CONFIG" >>"$DATADIR/stdout.log" 2>&1 &
+  if [ -n "$run_gid" ]; then
+    # box_for_magisk пропускает мимо своего перехвата трафик root:net_admin,
+    # поэтому смена первичной группы выводит запросы прокси из-под него.
+    su 0 -g "$run_gid" -c "cd '$DATADIR' && exec '$BIN' -config '$CONFIG'" >>"$DATADIR/stdout.log" 2>&1 &
+  else
+    "$BIN" -config "$CONFIG" >>"$DATADIR/stdout.log" 2>&1 &
+  fi
   pid=$!
   echo "$pid" >"$PIDFILE"
   log "dnscrypt-proxy запущен, pid $pid"

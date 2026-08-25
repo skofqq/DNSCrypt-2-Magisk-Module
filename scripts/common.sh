@@ -28,6 +28,7 @@ redirect_ipv6=auto        # auto | redirect | off
 tether_redirect=false
 disable_private_dns=true
 mirror_config=true
+run_gid=""
 restart_delay_max=60
 
 load_settings() {
@@ -35,7 +36,7 @@ load_settings() {
   # Читаем только строки вида ключ=значение, без исполнения произвольного кода.
   while IFS='=' read -r key value; do
     case "$key" in
-      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|mirror_config|restart_delay_max)
+      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|mirror_config|restart_delay_max|run_gid)
         value=$(echo "$value" | tr -d " \t\r\"'")
         eval "$key=\$value"
         ;;

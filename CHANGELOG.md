@@ -1,3 +1,14 @@
+# 2.1.18-r3
+
+Совместимость с другими сетевыми модулями.
+
+* dnscrypt-ctl conflicts: показывает, кто ещё перехватывает порт 53, распознаёт
+  box_for_magisk и zapret2 и подсказывает рабочую конфигурацию
+* новый ключ module.conf run_gid: запуск прокси с заданной первичной группой.
+  run_gid=net_admin выводит его запросы из-под перехвата box_for_magisk
+* README: раздел о совместимости с magisk-zapret2 (конфликта нет) и
+  box_for_magisk (спор за порт 53, схема сосуществования)
+
 # 2.1.18-r2
 
 * dnscrypt-ctl servers: list / raw / relays / info / get / set / add / remove / auto / active
