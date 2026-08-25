@@ -1,1 +1,1 @@
-# DNSCrypt-2-Magisk-Module
+# DNSCrypt 2 Magisk Module
