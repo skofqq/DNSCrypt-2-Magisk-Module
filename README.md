@@ -94,6 +94,38 @@ dnscrypt-ctl restart
 и в конфиге clash/sing-box указать сервером `127.0.0.1:5354`. Тогда системный DNS
 забирает box, а шифрует его наш прокси.
 
+Готовый блок для `/data/adb/box/clash/config.yaml`:
+
+```yaml
+dns:
+  enable: true
+  listen: 0.0.0.0:1053        # отсюда box берёт порт; строка должна быть одна
+  ipv6: false
+  enhanced-mode: fake-ip      # redir-host - если через dnscrypt должен идти весь DNS
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+    - '+.pool.ntp.org'
+    - 'time.*.com'
+  default-nameserver:
+    - 127.0.0.1:5354
+  nameserver:
+    - 127.0.0.1:5354
+  proxy-server-nameserver:
+    - 127.0.0.1:5354
+  fallback: []
+```
+
+`fallback` обязательно пустой: иначе часть запросов уйдёт мимо dnscrypt-proxy напрямую.
+`proxy-server-nameserver` тоже указывает на нас, иначе адреса прокси-серверов
+резолвятся системным DNS и запрос возвращается в clash по кругу.
+
+Что даёт `enhanced-mode`: при `fake-ip` через dnscrypt-proxy идут только direct-домены
+и адреса прокси-серверов, а проксируемые домены резолвятся на выходной ноде.
+При `redir-host` через него проходит весь DNS, но каждое соединение ждёт реального
+резолва - заметно медленнее на первом обращении к домену.
+
 `run_gid=net_admin` нужен потому, что box пропускает мимо своего перехвата трафик
 с владельцем `root:net_admin` — иначе запросы самого dnscrypt-proxy к резолверам
 пойдут через прокси box и сломаются, если тот не умеет UDP.
