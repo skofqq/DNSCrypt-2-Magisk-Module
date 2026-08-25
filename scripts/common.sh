@@ -100,3 +100,64 @@ dnscrypt_pid() {
   kill -0 "$pid" 2>/dev/null || return 1
   echo "$pid"
 }
+
+# --- работа со списком серверов -----------------------------------------
+# Кэш резолверов качает и проверяет подписью minisign сам dnscrypt-proxy;
+# мы его только читаем. Имя задано как cache_file в [sources], путь - от DATADIR.
+RESOLVERS_CACHE="$DATADIR/public-resolvers.md"
+RELAYS_CACHE="$DATADIR/relays.md"
+
+# Активное значение server_names: имена через запятую либо слово auto,
+# если строка закомментирована и прокси подбирает серверы сам.
+servers_get() {
+  line=$(grep -m1 '^[[:space:]]*server_names[[:space:]]*=' "$CONFIG" 2>/dev/null)
+  if [ -z "$line" ]; then
+    echo auto
+    return 0
+  fi
+  echo "$line" | sed 's/.*\[//; s/\].*//' | tr -d " '\"" 
+}
+
+config_backup() {
+  [ -f "$CONFIG" ] || return 1
+  cp -f "$CONFIG" "$CONFIG-$(date +%Y%m%d%H%M%S).bak"
+}
+
+# Записываем server_names, сохраняя место ключа в файле. Если активной строки
+# нет, вставляем её перед первой таблицей [...]: ключи верхнего уровня в TOML
+# обязаны идти до первой секции.
+servers_set() {
+  names=$1
+  val=""
+  for n in $(echo "$names" | tr ',' ' '); do
+    [ -n "$n" ] || continue
+    case "$n" in
+      *[!A-Za-z0-9._-]*) log "servers: недопустимое имя пропущено: $n"; continue ;;
+    esac
+    if [ -z "$val" ]; then val="'$n'"; else val="$val, '$n'"; fi
+  done
+  [ -n "$val" ] || return 1
+  config_backup || return 1
+  tmp="$CONFIG.tmp.$$"
+  awk -v val="$val" '
+    BEGIN { done = 0 }
+    !done && /^[[:space:]]*server_names[[:space:]]*=/ { print "server_names = [" val "]"; done = 1; next }
+    !done && /^[[:space:]]*\[/ { print "server_names = [" val "]"; print ""; done = 1 }
+    { print }
+    END { if (!done) print "server_names = [" val "]" }
+  ' "$CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$CONFIG"
+}
+
+# Возврат к автоподбору: строку не удаляем, а комментируем - прежний выбор
+# остаётся виден и его можно вернуть руками.
+servers_auto() {
+  grep -q '^[[:space:]]*server_names[[:space:]]*=' "$CONFIG" 2>/dev/null || return 0
+  config_backup || return 1
+  sed -i 's/^\([[:space:]]*\)server_names\([[:space:]]*\)=/\1# server_names\2=/' "$CONFIG"
+}
+
+servers_list() {
+  [ -f "$RESOLVERS_CACHE" ] || return 1
+  grep '^## ' "$RESOLVERS_CACHE" | sed 's/^## //'
+}

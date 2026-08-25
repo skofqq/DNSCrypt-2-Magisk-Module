@@ -14,6 +14,7 @@ dnscrypt-ctl <команда>
   status    состояние прокси, порт, правила перехвата
   json      то же одной строкой JSON (для внешних приложений)
   set K V   изменить настройку в module.conf
+  servers <подкоманда>  список резолверов и выбор серверов (см. ниже)
   start     запустить присмотр (supervisor)
   stop      остановить прокси и снять правила перехвата
   restart   перезапустить с перечитыванием конфига
@@ -59,12 +60,14 @@ case "$1" in
     nf_init_cmd
     if nf_check; then rules=true; else rules=false; fi
     if [ -n "$pid" ]; then running=true; else running=false; fi
-    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":"%s","rules_v4":%s,"redirect_ipv6":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s"}\n' \
+    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":"%s","rules_v4":%s,"redirect_ipv6":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
       "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "$(listen_port6)" \
       "$rules" "$redirect_ipv6" "$tether_redirect" \
       "$(settings get global private_dns_mode 2>/dev/null)" \
       "$CONFIG" \
-      "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)"
+      "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)" \
+      "$(servers_get)" \
+      "$([ -f "$RESOLVERS_CACHE" ] && echo true || echo false)"
     ;;
   set)
     [ -n "$2" ] && [ -n "$3" ] || { echo "использование: dnscrypt-ctl set <ключ> <значение>"; exit 1; }
@@ -112,6 +115,80 @@ case "$1" in
     cp -f "$MIRROR/dnscrypt-proxy.toml" "$CONFIG"
     stop_all; sleep 1; start_supervisor
     echo "конфиг импортирован, модуль перезапущен"
+    ;;
+  servers)
+    case "$2" in
+      list)
+        servers_list || { echo "кэш резолверов ещё не скачан: $RESOLVERS_CACHE"; exit 1; }
+        ;;
+      raw)
+        # Весь public-resolvers.md: имя, описание и sdns-стампы. Разбирать
+        # стампы удобнее на стороне приложения, здесь только отдаём файл.
+        cat "$RESOLVERS_CACHE" 2>/dev/null || { echo "кэш резолверов ещё не скачан"; exit 1; }
+        ;;
+      relays)
+        cat "$RELAYS_CACHE" 2>/dev/null || { echo "кэш релеев ещё не скачан"; exit 1; }
+        ;;
+      info)
+        if [ -f "$RESOLVERS_CACHE" ]; then
+          echo "файл: $RESOLVERS_CACHE"
+          echo "обновлён: $(date -r "$RESOLVERS_CACHE" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+          echo "серверов: $(grep -c '^## ' "$RESOLVERS_CACHE")"
+        else
+          echo "кэш резолверов ещё не скачан"
+          exit 1
+        fi
+        echo "выбрано: $(servers_get)"
+        ;;
+      get) servers_get ;;
+      set)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers set имя1,имя2"; exit 1; }
+        servers_set "$3" || { echo "не удалось записать server_names"; exit 1; }
+        echo "server_names = $(servers_get) (применится после restart)"
+        ;;
+      add)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers add имя"; exit 1; }
+        cur=$(servers_get)
+        [ "$cur" = auto ] && cur=""
+        case ",$cur," in
+          *",$3,"*) echo "$3 уже в списке"; exit 0 ;;
+        esac
+        servers_set "${cur:+$cur,}$3" || { echo "не удалось добавить $3"; exit 1; }
+        echo "server_names = $(servers_get) (применится после restart)"
+        ;;
+      remove|rm)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers remove имя"; exit 1; }
+        cur=$(servers_get)
+        [ "$cur" = auto ] && { echo "список и так пуст (автоподбор)"; exit 0; }
+        new=$(echo "$cur" | tr ',' ' ' | tr -s ' ')
+        new=$(for s in $new; do [ "$s" = "$3" ] || printf '%s,' "$s"; done | sed 's/,$//')
+        if [ -z "$new" ]; then
+          servers_auto || exit 1
+          echo "список опустел, включён автоподбор (применится после restart)"
+        else
+          servers_set "$new" || exit 1
+          echo "server_names = $(servers_get) (применится после restart)"
+        fi
+        ;;
+      auto)
+        servers_auto || { echo "не удалось изменить конфиг"; exit 1; }
+        echo "включён автоподбор серверов по фильтрам require_* (применится после restart)"
+        ;;
+      active)
+        # Строку про выбранный сервер пишет сам прокси при старте.
+        line=$(grep -a 'lowest initial latency' "$DATADIR/dnscrypt-proxy.log" 2>/dev/null | tail -n 1)
+        if [ -n "$line" ]; then
+          echo "$line"
+        else
+          echo "нет данных, посмотрите dnscrypt-ctl proxylog"
+          exit 1
+        fi
+        ;;
+      *)
+        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active"
+        exit 1
+        ;;
+    esac
     ;;
   *) usage ;;
 esac

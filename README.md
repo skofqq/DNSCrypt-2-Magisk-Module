@@ -50,7 +50,20 @@ dnscrypt-ctl log         # журнал модуля
 dnscrypt-ctl proxylog    # журнал dnscrypt-proxy
 dnscrypt-ctl rules       # цепочка DNSCRYPT
 dnscrypt-ctl set redirect_ipv6 off
+
+dnscrypt-ctl servers info      # где кэш резолверов, сколько их, что выбрано
+dnscrypt-ctl servers list      # имена всех серверов из кэша
+dnscrypt-ctl servers get       # текущий выбор или auto
+dnscrypt-ctl servers set a,b   # задать список
+dnscrypt-ctl servers add имя   # добавить один
+dnscrypt-ctl servers remove имя
+dnscrypt-ctl servers auto      # вернуть автоподбор по фильтрам require_*
+dnscrypt-ctl servers active    # какой сервер выбран прокси сейчас
 ```
+
+Список резолверов качает и проверяет подписью minisign сам dnscrypt-proxy;
+`servers` только читает этот кэш (`public-resolvers.md`) и правит `server_names`
+в конфиге, каждый раз делая резервную копию. Изменения применяются после `restart`.
 
 ## Как это работает
 

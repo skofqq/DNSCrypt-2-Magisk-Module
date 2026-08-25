@@ -1,6 +1,6 @@
 {
-    "version": "2.1.18-r1",
-    "versionCode": 211801,
-    "zipUrl": "https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/download/2.1.18-r1/dnscrypt-proxy-android-2.1.18-r1.zip",
+    "version": "2.1.18-r2",
+    "versionCode": 211802,
+    "zipUrl": "https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/download/2.1.18-r2/dnscrypt-proxy-android-2.1.18-r2.zip",
     "changelog": "https://raw.githubusercontent.com/skofqq/DNSCrypt-2-Magisk-Module/main/CHANGELOG.md"
 }

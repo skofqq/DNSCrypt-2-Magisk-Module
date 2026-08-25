@@ -1,3 +1,10 @@
+# 2.1.18-r2
+
+* dnscrypt-ctl servers: list / raw / relays / info / get / set / add / remove / auto / active
+  - выбор серверов правит server_names в конфиге с резервной копией, имена валидируются
+  - auto комментирует строку, а не удаляет: прежний выбор остаётся виден
+* в dnscrypt-ctl json добавлены поля servers и resolvers_cached
+
 # 2.1.18-r1
 
 Форк заброшенного апстрима d3cim. Обновлён dnscrypt-proxy 2.1.5 -> 2.1.18.
