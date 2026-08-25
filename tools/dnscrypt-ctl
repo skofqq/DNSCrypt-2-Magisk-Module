@@ -1,0 +1,117 @@
+#!/system/bin/sh
+# Управление модулем с телефона: dnscrypt-ctl <команда>
+# Команды json/set рассчитаны на вызов из внешнего приложения через su.
+MODDIR=/data/adb/modules/dnscrypt-proxy-android
+export MODDIR
+. "$MODDIR/scripts/common.sh"
+. "$MODDIR/scripts/netfilter.sh"
+load_settings
+
+usage() {
+  cat <<USAGE
+dnscrypt-ctl <команда>
+
+  status    состояние прокси, порт, правила перехвата
+  json      то же одной строкой JSON (для внешних приложений)
+  set K V   изменить настройку в module.conf
+  start     запустить присмотр (supervisor)
+  stop      остановить прокси и снять правила перехвата
+  restart   перезапустить с перечитыванием конфига
+  rules     показать цепочку $NAT_CHAIN
+  log       последние строки журнала модуля
+  proxylog  последние строки журнала dnscrypt-proxy
+  test      проверить резолвинг через локальный порт
+  export    выгрузить конфиг в $MIRROR
+  import    забрать конфиг из $MIRROR и перезапустить
+
+Коды возврата: 0 - успех, 1 - ошибка аргументов или состояния.
+USAGE
+}
+
+stop_all() {
+  for f in "$LOCKFILE" "$PIDFILE"; do
+    pid=$(cat "$f" 2>/dev/null)
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+    rm -f "$f"
+  done
+  pkill -f "$MODDIR/system/bin/dnscrypt-proxy" 2>/dev/null
+}
+
+start_supervisor() { ( "$MODDIR/scripts/supervisor.sh" >/dev/null 2>&1 & ) ; }
+
+
+case "$1" in
+  status)
+    pid=$(dnscrypt_pid) && echo "dnscrypt-proxy: работает, pid $pid" || echo "dnscrypt-proxy: остановлен"
+    sup=$(cat "$LOCKFILE" 2>/dev/null)
+    if [ -n "$sup" ] && kill -0 "$sup" 2>/dev/null; then echo "supervisor: работает, pid $sup"; else echo "supervisor: остановлен"; fi
+    p6=$(listen_port6)
+    echo "порт: $(listen_port)${p6:+, IPv6 $p6}"
+    echo "конфиг: $CONFIG"
+    nf_init_cmd
+    if nf_check; then echo "перехват IPv4: активен"; else echo "перехват IPv4: правил нет"; fi
+    echo "Private DNS: $(settings get global private_dns_mode 2>/dev/null)"
+    ;;
+  json)
+    pid=$(dnscrypt_pid) || pid=""
+    sup=$(cat "$LOCKFILE" 2>/dev/null)
+    kill -0 "$sup" 2>/dev/null || sup=""
+    nf_init_cmd
+    if nf_check; then rules=true; else rules=false; fi
+    if [ -n "$pid" ]; then running=true; else running=false; fi
+    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":"%s","rules_v4":%s,"redirect_ipv6":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s"}\n' \
+      "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "$(listen_port6)" \
+      "$rules" "$redirect_ipv6" "$tether_redirect" \
+      "$(settings get global private_dns_mode 2>/dev/null)" \
+      "$CONFIG" \
+      "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)"
+    ;;
+  set)
+    [ -n "$2" ] && [ -n "$3" ] || { echo "использование: dnscrypt-ctl set <ключ> <значение>"; exit 1; }
+    case "$2" in
+      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|mirror_config|restart_delay_max) ;;
+      *) echo "неизвестный ключ: $2"; exit 1 ;;
+    esac
+    touch "$SETTINGS"
+    if grep -qE "^[[:space:]]*$2[[:space:]]*=" "$SETTINGS"; then
+      sed -i "s|^[[:space:]]*$2[[:space:]]*=.*|$2=$3|" "$SETTINGS"
+    else
+      echo "$2=$3" >>"$SETTINGS"
+    fi
+    echo "$2=$3 (применится после dnscrypt-ctl restart)"
+    ;;
+  start)   start_supervisor; echo "запущено" ;;
+  stop)    stop_all; nf_stop; echo "остановлено, правила сняты" ;;
+  restart) stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
+  rules)
+    nf_init_cmd
+    $IPT -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null || echo "цепочки нет"
+    $IPT6 -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null
+    ;;
+  log)      tail -n "${2:-50}" "$LOGFILE" 2>/dev/null || { echo "журнала нет"; exit 1; } ;;
+  proxylog) tail -n "${2:-50}" "$DATADIR/dnscrypt-proxy.log" 2>/dev/null \
+              || tail -n "${2:-50}" "$DATADIR/stdout.log" 2>/dev/null \
+              || { echo "журнала нет"; exit 1; } ;;
+  test)
+    port=$(listen_port)
+    if command -v nslookup >/dev/null 2>&1; then
+      nslookup example.com 127.0.0.1 -port="$port" 2>&1 | tail -n 6
+    else
+      echo "nslookup недоступен, проверяю только сокет"
+      netstat -ltunp 2>/dev/null | grep ":$port"
+    fi
+    ;;
+  export)
+    mkdir -p "$MIRROR"
+    cp -f "$CONFIG" "$MIRROR/dnscrypt-proxy.toml" || exit 1
+    chown 0:1023 "$MIRROR/dnscrypt-proxy.toml" 2>/dev/null
+    echo "конфиг выгружен в $MIRROR"
+    ;;
+  import)
+    [ -f "$MIRROR/dnscrypt-proxy.toml" ] || { echo "нет $MIRROR/dnscrypt-proxy.toml"; exit 1; }
+    cp -f "$MIRROR/dnscrypt-proxy.toml" "$CONFIG"
+    stop_all; sleep 1; start_supervisor
+    echo "конфиг импортирован, модуль перезапущен"
+    ;;
+  *) usage ;;
+esac
