@@ -29,6 +29,19 @@ tether_redirect=false
 disable_private_dns=true
 mirror_config=true
 run_gid=""
+
+# Magisk su принимает только числовой GID: "-g net_admin" он отвергает.
+# getent на Android нет, поэтому известные AID переводим сами.
+run_gid_numeric() {
+  case "$run_gid" in
+    "") return ;;
+    net_admin) echo 3005 ;;
+    inet) echo 3003 ;;
+    net_raw) echo 3004 ;;
+    *[!0-9]*) log "run_gid='$run_gid': не число и не известная группа, игнорирую" ;;
+    *) echo "$run_gid" ;;
+  esac
+}
 restart_delay_max=60
 
 load_settings() {

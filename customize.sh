@@ -3,7 +3,7 @@ SKIPUNZIP=0
 ui_print " "
 ui_print "******************************"
 ui_print "*   dnscrypt-proxy-android   *"
-ui_print "*            2.2             *"
+ui_print "*           2.2.1            *"
 ui_print "******************************"
 ui_print " "
 

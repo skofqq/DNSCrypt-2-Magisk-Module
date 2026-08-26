@@ -128,14 +128,26 @@ while :; do
 
   started=$(date +%s)
   cd "$DATADIR" || exit 1
-  if [ -n "$run_gid" ]; then
+  gid=$(run_gid_numeric)
+  # Проверяем смену группы заранее: настройка не должна ронять резолвинг.
+  if [ -n "$gid" ] && ! su -g "$gid" 0 -c 'exit 0' >/dev/null 2>&1; then
+    log "смена первичной группы на $gid недоступна, запускаю без неё"
+    gid=""
+  fi
+  if [ -n "$gid" ]; then
     # box_for_magisk пропускает мимо своего перехвата трафик root:net_admin,
     # поэтому смена первичной группы выводит запросы прокси из-под него.
-    su 0 -g "$run_gid" -c "cd '$DATADIR' && exec '$BIN' -config '$CONFIG'" >>"$DATADIR/stdout.log" 2>&1 &
+    # Опции su обязаны стоять до имени пользователя, иначе они уходят в шелл.
+    su -g "$gid" 0 -c "cd '$DATADIR' && exec '$BIN' -config '$CONFIG'" >>"$DATADIR/stdout.log" 2>&1 &
+    pid=$!
+    # su остаётся посредником, поэтому pid самого прокси ищем отдельно.
+    sleep 1
+    real=$(pidof dnscrypt-proxy 2>/dev/null | tr ' ' '\n' | tail -1)
+    [ -n "$real" ] && pid=$real
   else
     "$BIN" -config "$CONFIG" >>"$DATADIR/stdout.log" 2>&1 &
+    pid=$!
   fi
-  pid=$!
   echo "$pid" >"$PIDFILE"
   log "dnscrypt-proxy запущен, pid $pid"
 
