@@ -54,6 +54,7 @@
 
 | ключ | значения | смысл |
 |---|---|---|
+| `autostart` | `true` / `false` | подниматься при загрузке; `false` оставляет модуль установленным, но спящим |
 | `redirect_ipv4` | `true` / `false` | перехват IPv4 DNS, основной режим |
 | `redirect_ipv6` | `auto` / `redirect` / `off` | `auto` перехватывает, только если ядро умеет `ip6tables nat` |
 | `tether_redirect` | `true` / `false` | заворачивать DNS клиентов хотспота |

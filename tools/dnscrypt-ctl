@@ -80,7 +80,7 @@ case "$1" in
         # теряется между слоями кавычек.
         case "$3" in default|none) set -- "$1" "$2" "" ;; esac
         ;;
-      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max)
+      autostart|redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max)
         [ -n "$3" ] || { echo "пустое значение допустимо только для run_gid"; exit 1; }
         ;;
       mirror_config)

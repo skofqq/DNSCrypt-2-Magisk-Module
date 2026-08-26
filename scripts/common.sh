@@ -15,13 +15,11 @@ PIDFILE="$DATADIR/dnscrypt-proxy.pid"
 LOCKFILE="$DATADIR/supervisor.pid"
 BIN="$MODDIR/system/bin/dnscrypt-proxy"
 
-# Зеркало конфига для файлового менеджера. /data/media/0 - настоящий ext4/f2fs,
-# то же самое, что видно как /storage/emulated/0.
-
 NAT_CHAIN=DNSCRYPT
 LOG_MAX_SIZE=262144
 
 # --- настройки модуля (переопределяются в $SETTINGS) ---------------------
+autostart=true
 redirect_ipv4=true
 redirect_ipv6=auto        # auto | redirect | off
 tether_redirect=false
@@ -47,7 +45,7 @@ load_settings() {
   # Читаем только строки вида ключ=значение, без исполнения произвольного кода.
   while IFS='=' read -r key value; do
     case "$key" in
-      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max|run_gid)
+      autostart|redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max|run_gid)
         value=$(echo "$value" | tr -d " \t\r\"'")
         eval "$key=\$value"
         ;;
