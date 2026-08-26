@@ -14,6 +14,7 @@ dnscrypt-ctl <команда>
   status    состояние прокси, порт, правила перехвата
   json      то же одной строкой JSON (для внешних приложений)
   set K V   изменить настройку в module.conf
+  reset     вернуть все настройки модуля к значениям по умолчанию
   servers <подкоманда>  список резолверов и выбор серверов (см. ниже)
   start     запустить присмотр (supervisor)
   stop      остановить прокси и снять правила перехвата
@@ -69,9 +70,19 @@ case "$1" in
       "$([ -f "$RESOLVERS_CACHE" ] && echo true || echo false)"
     ;;
   set)
-    [ -n "$2" ] && [ -n "$3" ] || { echo "использование: dnscrypt-ctl set <ключ> <значение>"; exit 1; }
+    # Значение обязано быть передано, но пустым быть может: для run_gid пустота
+    # и есть "по умолчанию". Проверять -n "$3" здесь нельзя, иначе сбросить ключ
+    # штатными средствами невозможно.
+    [ -n "$2" ] && [ "$#" -ge 3 ] || { echo "использование: dnscrypt-ctl set <ключ> <значение>"; exit 1; }
     case "$2" in
-      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max|run_gid) ;;
+      run_gid)
+        # default и none - псевдонимы пустоты: в шелле пустой аргумент легко
+        # теряется между слоями кавычек.
+        case "$3" in default|none) set -- "$1" "$2" "" ;; esac
+        ;;
+      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max)
+        [ -n "$3" ] || { echo "пустое значение допустимо только для run_gid"; exit 1; }
+        ;;
       mirror_config)
         echo "mirror_config удалён в 2.3: модуль больше ничего не держит"
         echo "на внутренней памяти. Настройки живут только в $SETTINGS"
@@ -86,6 +97,19 @@ case "$1" in
       echo "$2=$3" >>"$SETTINGS"
     fi
     echo "$2=$3 (применится после dnscrypt-ctl restart)"
+    ;;
+  reset)
+    # Шаблон остаётся в модуле после установки: customize.sh чистит
+    # только binary и tools.
+    TEMPLATE="$MODDIR/config/module.conf"
+    [ -f "$TEMPLATE" ] || { echo "нет шаблона $TEMPLATE"; exit 1; }
+    if [ -f "$SETTINGS" ]; then
+      backup="$SETTINGS-$(date +%Y%m%d%H%M%S).bak"
+      cp -f "$SETTINGS" "$backup" 2>/dev/null && echo "прежние настройки: $backup"
+    fi
+    cp -f "$TEMPLATE" "$SETTINGS" || exit 1
+    chmod 0600 "$SETTINGS" 2>/dev/null
+    echo "настройки сброшены (применится после dnscrypt-ctl restart)"
     ;;
   start)   start_supervisor; echo "запущено" ;;
   stop)    stop_all; nf_stop; echo "остановлено, правила сняты" ;;
