@@ -17,7 +17,6 @@ BIN="$MODDIR/system/bin/dnscrypt-proxy"
 
 # Зеркало конфига для файлового менеджера. /data/media/0 - настоящий ext4/f2fs,
 # то же самое, что видно как /storage/emulated/0.
-MIRROR=/data/media/0/dnscrypt-proxy
 
 NAT_CHAIN=DNSCRYPT
 LOG_MAX_SIZE=262144
@@ -27,7 +26,6 @@ redirect_ipv4=true
 redirect_ipv6=auto        # auto | redirect | off
 tether_redirect=false
 disable_private_dns=true
-mirror_config=true
 run_gid=""
 
 # Magisk su принимает только числовой GID: "-g net_admin" он отвергает.
@@ -49,7 +47,7 @@ load_settings() {
   # Читаем только строки вида ключ=значение, без исполнения произвольного кода.
   while IFS='=' read -r key value; do
     case "$key" in
-      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|mirror_config|restart_delay_max|run_gid)
+      redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max|run_gid)
         value=$(echo "$value" | tr -d " \t\r\"'")
         eval "$key=\$value"
         ;;

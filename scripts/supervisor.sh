@@ -54,32 +54,6 @@ wait_boot() {
   [ "$(getprop sys.boot_completed)" = "1" ]
 }
 
-# Конфиг живёт в /data/adb (доступен до разблокировки экрана), а на внутреннюю
-# память кладётся копия для правки файловым менеджером. Симлинк или bind-mount
-# сюда не годятся: FUSE не отдаёт симлинки, а SELinux-контекст adb_data_file
-# закрыт для приложений.
-mirror_sync() {
-  is_true "$mirror_config" || return 0
-  mkdir -p "$MIRROR" 2>/dev/null || return 0
-  if [ -f "$MIRROR/dnscrypt-proxy.toml" ] && [ "$MIRROR/dnscrypt-proxy.toml" -nt "$CONFIG" ]; then
-    cp -f "$MIRROR/dnscrypt-proxy.toml" "$CONFIG"
-    log "конфиг импортирован из $MIRROR"
-  else
-    cp -f "$CONFIG" "$MIRROR/dnscrypt-proxy.toml" 2>/dev/null
-  fi
-  for f in blocked-names.txt blocked-ips.txt allowed-names.txt allowed-ips.txt exclude-ips.txt module.conf; do
-    if [ -f "$MIRROR/$f" ] && [ "$MIRROR/$f" -nt "$DATADIR/$f" ]; then
-      cp -f "$MIRROR/$f" "$DATADIR/$f"
-      log "$f импортирован из $MIRROR"
-    elif [ -f "$DATADIR/$f" ]; then
-      cp -f "$DATADIR/$f" "$MIRROR/$f" 2>/dev/null
-    fi
-  done
-  chmod -R 0644 "$MIRROR" 2>/dev/null
-  chmod 0755 "$MIRROR" 2>/dev/null
-  chown -R 0:1023 "$MIRROR" 2>/dev/null
-}
-
 # Private DNS перехватить нельзя - он ходит мимо порта 53 по DoT.
 # `settings` доступен только после загрузки, в customize.sh (recovery) его нет.
 disable_private_dns() {
@@ -111,10 +85,7 @@ fi
 
 # Всё, что требует поднятой системы, не должно задерживать запуск прокси.
 (
-  wait_boot && {
-    disable_private_dns
-    mirror_sync
-  }
+  wait_boot && disable_private_dns
 ) &
 
 delay=5

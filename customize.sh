@@ -3,7 +3,7 @@ SKIPUNZIP=0
 ui_print " "
 ui_print "******************************"
 ui_print "*   dnscrypt-proxy-android   *"
-ui_print "*           2.2.1            *"
+ui_print "*            2.3             *"
 ui_print "******************************"
 ui_print " "
 
@@ -65,7 +65,7 @@ rm -rf "$MODPATH/binary" "$MODPATH/tools"
 
 ui_print " "
 ui_print "  Конфиг:  $DATADIR/dnscrypt-proxy.toml"
-ui_print "  Копия для правки: /storage/emulated/0/dnscrypt-proxy"
+ui_print "  Настройки: $DATADIR/module.conf"
 ui_print "  Управление: dnscrypt-ctl status | restart | log"
 ui_print "  Private DNS будет выключен после загрузки."
 ui_print " "
