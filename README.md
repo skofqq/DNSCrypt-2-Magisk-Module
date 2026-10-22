@@ -56,11 +56,21 @@
 |---|---|---|
 | `autostart` | `true` / `false` | подниматься при загрузке; `false` оставляет модуль установленным, но спящим |
 | `redirect_ipv4` | `true` / `false` | перехват IPv4 DNS, основной режим |
-| `redirect_ipv6` | `auto` / `redirect` / `off` | `auto` перехватывает, только если ядро умеет `ip6tables nat` |
+| `redirect_ipv6` | `auto` / `redirect` / `off` | перехват IPv6 DNS; без `ip6tables nat` DNS на IPv6-адреса блокируется, и система уходит на IPv4 (`auto` — только пока есть IPv4) |
 | `tether_redirect` | `true` / `false` | заворачивать DNS клиентов хотспота |
 | `disable_private_dns` | `true` / `false` | системный Private DNS ходит по DoT мимо порта 53 |
 | `restart_delay_max` | 5…600 секунд | потолок паузы между перезапусками упавшего прокси |
 | `run_gid` | имя группы, GID или пусто | первичная группа процесса, нужна рядом с box_for_magisk |
+
+Адреса из `bootstrap_resolvers` и `netprobe_address` (по умолчанию 9.9.9.9, 1.1.1.1,
+8.8.8.8) и из `exclude-ips.txt` в перехват не попадают, иначе прокси завернёт сам себя.
+Значит, приложение, которое само шлёт DNS прямо на эти адреса, пройдёт мимо прокси.
+Если это важно, укажите в bootstrap адреса, которыми приложения не пользуются.
+
+`dnscrypt-ctl test` проверяет главное: резолвит уникальное имя системным резолвером
+и смотрит, дошёл ли запрос до перехвата. Строка `IPv6 DNS` в `status` (и поле
+`ipv6_dns` в `json`: `redirected` / `blocked` / `bypass`) показывает, не идёт ли
+DNS мимо прокси по IPv6.
 
 По умолчанию `server_names` пуст — прокси сам выбирает серверы по фильтрам
 `require_dnssec` / `require_nolog` / `require_nofilter`.

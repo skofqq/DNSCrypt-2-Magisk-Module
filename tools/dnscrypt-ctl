@@ -40,6 +40,37 @@ stop_all() {
 
 start_supervisor() { ( "$MODDIR/scripts/supervisor.sh" >/dev/null 2>&1 & ) ; }
 
+supervisor_running() {
+  sup=$(cat "$LOCKFILE" 2>/dev/null)
+  [ -n "$sup" ] && kill -0 "$sup" 2>/dev/null
+}
+
+# Сумма пакетов, прошедших через DNAT нашей цепочки (IPv4 и IPv6).
+dnat_packets() {
+  { $IPT -t nat -L $NAT_CHAIN -v -n -x 2>/dev/null; $IPT6 -t nat -L $NAT_CHAIN -v -n -x 2>/dev/null; } \
+    | awk '/DNAT/ { s += $1 } END { print s + 0 }'
+}
+
+# Проверка значения перед записью: иначе «применится после restart»
+# обещало то, что load_settings потом молча отбросит.
+valid_value() {
+  case "$1" in
+    autostart|redirect_ipv4|tether_redirect|disable_private_dns)
+      case "$2" in true|false) return 0 ;; esac
+      echo "$1: допустимо true или false" ;;
+    redirect_ipv6)
+      case "$2" in auto|redirect|off) return 0 ;; esac
+      echo "redirect_ipv6: допустимо auto, redirect или off" ;;
+    restart_delay_max)
+      case "$2" in ""|*[!0-9]*) ;; *) [ "$2" -ge 5 ] && [ "$2" -le 600 ] && return 0 ;; esac
+      echo "restart_delay_max: целое число от 5 до 600" ;;
+    run_gid)
+      case "$2" in ""|net_admin|inet|net_raw) return 0 ;; *[!0-9]*) ;; *) return 0 ;; esac
+      echo "run_gid: net_admin, inet, net_raw, числовой GID или default" ;;
+  esac
+  return 1
+}
+
 
 case "$1" in
   status)
@@ -51,6 +82,11 @@ case "$1" in
     echo "конфиг: $CONFIG"
     nf_init_cmd
     if nf_check; then echo "перехват IPv4: активен"; else echo "перехват IPv4: правил нет"; fi
+    case "$(nf_ipv6_state)" in
+      redirected) echo "IPv6 DNS: перехвачен" ;;
+      blocked)    echo "IPv6 DNS: заблокирован, система ходит по IPv4 (нет ip6tables nat)" ;;
+      *)          echo "IPv6 DNS: идёт мимо прокси" ;;
+    esac
     echo "Private DNS: $(settings get global private_dns_mode 2>/dev/null)"
     ;;
   json)
@@ -60,9 +96,11 @@ case "$1" in
     nf_init_cmd
     if nf_check; then rules=true; else rules=false; fi
     if [ -n "$pid" ]; then running=true; else running=false; fi
-    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":"%s","rules_v4":%s,"redirect_ipv6":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
-      "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "$(listen_port6)" \
-      "$rules" "$redirect_ipv6" "$tether_redirect" \
+    p6=$(listen_port6)
+    # port6 - число или null, как port; раньше он отдавался строкой.
+    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":%s,"rules_v4":%s,"redirect_ipv6":"%s","ipv6_dns":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
+      "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "${p6:-null}" \
+      "$rules" "$redirect_ipv6" "$(nf_ipv6_state)" "$tether_redirect" \
       "$(settings get global private_dns_mode 2>/dev/null)" \
       "$CONFIG" \
       "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)" \
@@ -79,9 +117,11 @@ case "$1" in
         # default и none - псевдонимы пустоты: в шелле пустой аргумент легко
         # теряется между слоями кавычек.
         case "$3" in default|none) set -- "$1" "$2" "" ;; esac
+        valid_value "$2" "$3" || exit 1
         ;;
       autostart|redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max)
         [ -n "$3" ] || { echo "пустое значение допустимо только для run_gid"; exit 1; }
+        valid_value "$2" "$3" || exit 1
         ;;
       mirror_config)
         echo "mirror_config удалён в 2.3: модуль больше ничего не держит"
@@ -111,7 +151,13 @@ case "$1" in
     chmod 0600 "$SETTINGS" 2>/dev/null
     echo "настройки сброшены (применится после dnscrypt-ctl restart)"
     ;;
-  start)   start_supervisor; echo "запущено" ;;
+  start)
+    if supervisor_running; then
+      echo "уже запущено"
+    else
+      start_supervisor; echo "запущено"
+    fi
+    ;;
   stop)    stop_all; nf_stop; echo "остановлено, правила сняты" ;;
   restart) stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
   rules)
@@ -127,9 +173,23 @@ case "$1" in
     port=$(listen_port)
     if command -v nslookup >/dev/null 2>&1; then
       nslookup example.com 127.0.0.1 -port="$port" 2>&1 | tail -n 6
+    elif port_busy "$port"; then
+      echo "прокси слушает порт $port"
     else
-      echo "nslookup недоступен, проверяю только сокет"
-      netstat -ltunp 2>/dev/null | grep ":$port"
+      echo "на порту $port никто не слушает"
+    fi
+    # Главное - доходят ли системные запросы до прокси. Резолвим уникальное
+    # имя через системный резолвер (ping) и смотрим, выросли ли счётчики DNAT.
+    nf_init_cmd
+    before=$(dnat_packets)
+    ping -c 1 -W 1 "dnscrypt-test-$$-$(date +%s).example.com" >/dev/null 2>&1
+    after=$(dnat_packets)
+    if [ "$after" -gt "$before" ]; then
+      echo "системный DNS идёт через прокси (пакетов через перехват: $((after - before)))"
+    else
+      echo "системный DNS НЕ дошёл до перехвата: запросы идут мимо прокси"
+      echo "IPv6 DNS: $(nf_ipv6_state); подробности: dnscrypt-ctl conflicts"
+      exit 1
     fi
     ;;
   export|import)
@@ -236,8 +296,16 @@ case "$1" in
       echo "    dnscrypt-ctl set redirect_ipv4 false; set redirect_ipv6 off"
       echo "    и в конфиге clash/sing-box указать сервером 127.0.0.1:$(listen_port)."
       echo "    Чтобы запросы самого прокси шли мимо box: set run_gid net_admin"
+    elif [ -d /data/adb/modules/box_for_root ] || [ -d /data/adb/box ]; then
+      echo "  box_for_magisk: установлен, сейчас не перехватывает DNS."
+      echo "    Когда он включится, он заберёт порт 53 себе. Его собственный"
+      echo "    dnscrypt-proxy по умолчанию тоже слушает 5354 - не включайте оба."
     else
       echo "  box_for_magisk: не обнаружен"
+    fi
+    port=$(listen_port)
+    if port_busy "$port" && ! dnscrypt_pid >/dev/null; then
+      echo "  порт $port занят чужим процессом, наш прокси не сможет его открыть"
     fi
     if $IPT -t mangle -S 2>/dev/null | grep -qE 'ZAPRET2_|Z2O_|Z2I_'; then
       echo "  zapret2: обнаружен. Конфликта нет - он работает в mangle по портам"

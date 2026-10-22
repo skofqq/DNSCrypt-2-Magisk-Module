@@ -13,6 +13,7 @@ SETTINGS="$DATADIR/module.conf"
 LOGFILE="$DATADIR/module.log"
 PIDFILE="$DATADIR/dnscrypt-proxy.pid"
 LOCKFILE="$DATADIR/supervisor.pid"
+PRIVDNS_SAVE="$DATADIR/.private_dns_mode"
 BIN="$MODDIR/system/bin/dnscrypt-proxy"
 
 NAT_CHAIN=DNSCRYPT

@@ -60,6 +60,9 @@ disable_private_dns() {
   is_true "$disable_private_dns" || return 0
   current=$(settings get global private_dns_mode 2>/dev/null)
   [ "$current" = "off" ] && return 0
+  # Запоминаем исходный режим, чтобы вернуть его при удалении модуля.
+  # Пустое значение и null - системное умолчание (автоматический режим).
+  [ -f "$PRIVDNS_SAVE" ] || echo "${current:-null}" >"$PRIVDNS_SAVE"
   settings put global private_dns_mode off 2>/dev/null \
     || cmd settings put global private_dns_mode off 2>/dev/null
   log "Private DNS переключён в off (было: ${current:-неизвестно})"
@@ -133,6 +136,7 @@ while :; do
       log "правила перехвата пропали (netd?), ставлю заново"
       nf_start
     fi
+    nf_guard6
     trim_logs
   done
   wait "$pid" 2>/dev/null

@@ -25,6 +25,11 @@ if [ -f "$CONFIG" ]; then
   chown 0:1023 "/data/media/0/dnscrypt-proxy.toml.bak" 2>/dev/null
 fi
 
+# Исходный режим Private DNS: модуль выключал его, и после удаления DNS
+# оставался без DoT. settings работает только после загрузки, а uninstall.sh
+# Magisk вызывает рано, поэтому значение читаем сейчас, а пишем в фоне ниже.
+privdns=$(cat "$PRIVDNS_SAVE" 2>/dev/null)
+
 rm -rf "$DATADIR"
 
 # Зеркало и следы старых версий на внутренней памяти. Ждём готовности хранилища,
@@ -44,4 +49,9 @@ rm -rf "$DATADIR"
            /mnt/runtime/write/emulated/0/dnscrypt-proxy; do
     rm -rf "$p" 2>/dev/null
   done
+  case "$privdns" in
+    "") ;;
+    null) settings delete global private_dns_mode >/dev/null 2>&1 ;;
+    *) settings put global private_dns_mode "$privdns" >/dev/null 2>&1 ;;
+  esac
 ) &

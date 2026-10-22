@@ -93,6 +93,78 @@ nf_unlink_all() {
   done
 }
 
+# Запасной вариант для IPv6, когда nat-таблицы нет (эмулятор, часть ядер):
+# в filter/OUTPUT отклоняем DNS на чужие IPv6-адреса, и резолвер Android
+# уходит на IPv4-сервер, который мы заворачиваем. Без этого запросы на
+# IPv6-DNS сети (fec0::3 на эмуляторе, адрес роутера дома) шли мимо прокси,
+# а блок-листы не работали. FORWARD не трогаем - раздача Wi-Fi не страдает.
+nf_block6_on() {
+  $IPT6 -t filter -N $NAT_CHAIN 2>/dev/null
+  $IPT6 -t filter -F $NAT_CHAIN 2>/dev/null || return 1
+  for ip in $(exclusions_v6); do
+    $IPT6 -t filter -A $NAT_CHAIN -d "$ip" -j RETURN 2>/dev/null
+  done
+  $IPT6 -t filter -A $NAT_CHAIN -d ::1/128 -j RETURN 2>/dev/null
+  $IPT6 -t filter -A $NAT_CHAIN -p udp --dport 53 -j REJECT 2>/dev/null || return 1
+  $IPT6 -t filter -A $NAT_CHAIN -p tcp --dport 53 -j REJECT --reject-with tcp-reset 2>/dev/null \
+    || $IPT6 -t filter -A $NAT_CHAIN -p tcp --dport 53 -j REJECT 2>/dev/null || return 1
+  for proto in udp tcp; do
+    $IPT6 -t filter -C OUTPUT -p $proto --dport 53 -j $NAT_CHAIN 2>/dev/null \
+      || $IPT6 -t filter -I OUTPUT -p $proto --dport 53 -j $NAT_CHAIN 2>/dev/null || return 1
+  done
+}
+
+nf_block6_off() {
+  for proto in udp tcp; do
+    while $IPT6 -t filter -D OUTPUT -p $proto --dport 53 -j $NAT_CHAIN 2>/dev/null; do :; done
+  done
+  $IPT6 -t filter -F $NAT_CHAIN 2>/dev/null
+  $IPT6 -t filter -X $NAT_CHAIN 2>/dev/null
+}
+
+nf_block6_active() {
+  $IPT6 -t filter -C OUTPUT -p udp --dport 53 -j $NAT_CHAIN 2>/dev/null
+}
+
+# Есть ли у устройства IPv4-маршрут по умолчанию. В режиме auto блокировать
+# IPv6-DNS можно только при живом IPv4: в IPv6-only сети (464XLAT у части
+# операторов) других DNS-серверов у системы нет, и блокировка убила бы резолвинг.
+nf_have_ipv4() {
+  ip -4 route show table all 2>/dev/null | grep -q '^default'
+}
+
+# Включает или снимает блокировку IPv6-DNS по режиму и текущей сети.
+# Вызывается при старте и периодически из supervisor: сеть меняется.
+nf_guard6() {
+  is_true "$redirect_ipv4" || { nf_block6_active && nf_block6_off; return 0; }
+  case "$redirect_ipv6" in
+    redirect|auto) ;;
+    *) nf_block6_active && nf_block6_off; return 0 ;;
+  esac
+  # Работает nat-перехват - блокировка не нужна.
+  $IPT6 -t nat -C OUTPUT -p udp --dport 53 -j $NAT_CHAIN 2>/dev/null && return 0
+  if [ "$redirect_ipv6" = redirect ] || nf_have_ipv4; then
+    if ! nf_block6_active; then
+      nf_block6_on && log "IPv6: nat недоступен, DNS на IPv6-адреса блокируется (резолвер уйдёт на IPv4)"
+    fi
+  elif nf_block6_active; then
+    nf_block6_off
+    log "IPv6: нет IPv4-маршрута, блокировка IPv6-DNS снята, чтобы не остаться без DNS"
+  fi
+}
+
+# Как сейчас обходится IPv6-DNS: redirected (nat-перехват), blocked
+# (запасная блокировка) или bypass (идёт мимо прокси).
+nf_ipv6_state() {
+  if $IPT6 -t nat -C OUTPUT -p udp --dport 53 -j $NAT_CHAIN 2>/dev/null; then
+    echo redirected
+  elif nf_block6_active; then
+    echo blocked
+  else
+    echo bypass
+  fi
+}
+
 nf_start() {
   nf_init_cmd
   nf_enable_route_localnet
@@ -119,14 +191,12 @@ nf_start() {
         nf_link "$IPT6" OUTPUT tcp
         log "IPv6: перехват DNS включён"
       else
-        # Молча оставляем IPv6-DNS системе: REJECT здесь убил бы резолвинг
-        # в IPv6-only сетях, а глобальное отключение IPv6 - раздачу Wi-Fi.
-        [ "$redirect_ipv6" = "redirect" ] && log "IPv6: nat-таблица недоступна, перехват пропущен"
-        [ "$redirect_ipv6" = "auto" ] && log "IPv6: перехват недоступен (нет ip6tables nat), пропущено"
+        log "IPv6: перехват недоступен (нет ip6tables nat)"
       fi
       ;;
     *) log "IPv6: перехват отключён настройкой" ;;
   esac
+  nf_guard6
 }
 
 # Проверка, что привязки на месте: netd при смене сети или включении
@@ -146,5 +216,6 @@ nf_stop() {
   nf_unlink_all "$IPT6" OUTPUT
   $IPT6 -t nat -F $NAT_CHAIN 2>/dev/null
   $IPT6 -t nat -X $NAT_CHAIN 2>/dev/null
+  nf_block6_off
   nf_restore_route_localnet
 }
