@@ -180,7 +180,16 @@ case "$1" in
     fi
     ;;
   stop)    stop_all; nf_stop; restore_private_dns; touch "$MANUAL_STOP"; echo "остановлено, правила сняты" ;;
-  restart) rm -f "$MANUAL_STOP"; stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
+  restart)
+    # restart перечитывает конфиг у работающего прокси, но не поднимает
+    # остановленный вручную: иначе «Сохранить» в приложении включало бы его
+    # за спиной у пользователя, переключившегося на box_for_magisk.
+    if [ -f "$MANUAL_STOP" ] && ! supervisor_running; then
+      echo "прокси остановлен вручную, изменения применятся при следующем запуске (dnscrypt-ctl start)"
+    else
+      stop_all; sleep 1; start_supervisor; echo "перезапущено"
+    fi
+    ;;
   rules)
     nf_init_cmd
     $IPT -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null || echo "цепочки нет"
