@@ -79,6 +79,14 @@ valid_value() {
 }
 
 
+# Кто дёрнул управляющую команду: при двух модулях и двух приложениях иначе
+# не понять, откуда взялся неожиданный старт или стоп.
+caller() {
+  pp=$(cat /proc/$PPID/cmdline 2>/dev/null | tr '\0' ' ' | cut -c1-80)
+  echo "${pp:-pid $PPID}"
+}
+case "$1" in start|stop|restart) log "dnscrypt-ctl $1 (вызвал: $(caller))" ;; esac
+
 case "$1" in
   status)
     pid=$(dnscrypt_pid) && echo "dnscrypt-proxy: работает, pid $pid" || echo "dnscrypt-proxy: остановлен"
