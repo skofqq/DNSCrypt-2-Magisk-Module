@@ -17,7 +17,7 @@ dnscrypt-ctl <команда>
   reset     вернуть все настройки модуля к значениям по умолчанию
   servers <подкоманда>  список резолверов и выбор серверов (см. ниже)
   start     запустить присмотр (supervisor)
-  stop      остановить прокси и снять правила перехвата
+  stop      остановить прокси и снять правила (сохраняется после перезагрузки)
   restart   перезапустить с перечитыванием конфига
   rules     показать цепочку $NAT_CHAIN
   conflicts кто ещё перехватывает DNS: box_for_magisk, zapret2 и прочие
@@ -105,14 +105,15 @@ case "$1" in
     if [ -n "$pid" ]; then running=true; else running=false; fi
     p6=$(listen_port6)
     # port6 - число или null, как port; раньше он отдавался строкой.
-    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":%s,"rules_v4":%s,"redirect_ipv6":"%s","ipv6_dns":"%s","box_dns":%s,"tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
+    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":%s,"rules_v4":%s,"redirect_ipv6":"%s","ipv6_dns":"%s","box_dns":%s,"tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s,"manual_stop":%s}\n' \
       "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "${p6:-null}" \
       "$rules" "$redirect_ipv6" "$(nf_ipv6_state)" "$(box_takes_dns && echo true || echo false)" "$tether_redirect" \
       "$(settings get global private_dns_mode 2>/dev/null)" \
       "$CONFIG" \
       "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)" \
       "$(servers_get)" \
-      "$([ -f "$RESOLVERS_CACHE" ] && echo true || echo false)"
+      "$([ -f "$RESOLVERS_CACHE" ] && echo true || echo false)" \
+      "$([ -f "$MANUAL_STOP" ] && echo true || echo false)"
     ;;
   set)
     # Значение обязано быть передано, но пустым быть может: для run_gid пустота
@@ -162,11 +163,12 @@ case "$1" in
     if supervisor_running; then
       echo "уже запущено"
     else
+      rm -f "$MANUAL_STOP"
       start_supervisor; echo "запущено"
     fi
     ;;
-  stop)    stop_all; nf_stop; echo "остановлено, правила сняты" ;;
-  restart) stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
+  stop)    stop_all; nf_stop; touch "$MANUAL_STOP"; echo "остановлено, правила сняты" ;;
+  restart) rm -f "$MANUAL_STOP"; stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
   rules)
     nf_init_cmd
     $IPT -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null || echo "цепочки нет"

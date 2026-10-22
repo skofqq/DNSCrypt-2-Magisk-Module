@@ -14,6 +14,9 @@ LOGFILE="$DATADIR/module.log"
 PIDFILE="$DATADIR/dnscrypt-proxy.pid"
 LOCKFILE="$DATADIR/supervisor.pid"
 PRIVDNS_SAVE="$DATADIR/.private_dns_mode"
+# Отметка «остановлен вручную»: dnscrypt-ctl stop (кнопка в приложении)
+# переживает перезагрузку, start/restart её снимают.
+MANUAL_STOP="$DATADIR/.manual_stop"
 BIN="$MODDIR/system/bin/dnscrypt-proxy"
 
 NAT_CHAIN=DNSCRYPT
