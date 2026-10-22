@@ -271,16 +271,24 @@ case "$1" in
       live)
         # Серверы, между которыми прокси сейчас распределяет запросы:
         # строки «[имя] OK (протокол) - rtt: Nms» после последнего старта.
-        # JSON-массив, отсортированный по rtt; для приложения и проверки DNS.
+        # Одна строка JSON для приложения: стратегия балансировки из конфига
+        # (по умолчанию p2 - два самых быстрых), число живых серверов из строки
+        # «live servers: N» и список, отсортированный по rtt.
         LOGF="$DATADIR/dnscrypt-proxy.log"
-        [ -f "$LOGF" ] || { echo "[]"; exit 1; }
+        strategy=$(grep -m1 '^[[:space:]]*lb_strategy' "$CONFIG" 2>/dev/null | sed "s/.*=[[:space:]]*//; s/[\"' ]//g")
+        [ -n "$strategy" ] || strategy=p2
+        if [ ! -f "$LOGF" ]; then
+          printf '{"strategy":"%s","live":0,"servers":[]}\n' "$strategy"
+          exit 1
+        fi
         start=$(grep -an 'dnscrypt-proxy [0-9]' "$LOGF" | tail -n 1 | cut -d: -f1)
-        tail -n +"${start:-1}" "$LOGF" | grep -a '\] OK (' | sed -n \
+        run=$(tail -n +"${start:-1}" "$LOGF")
+        live=$(echo "$run" | grep -ao 'live servers: [0-9]*' | tail -n 1 | grep -o '[0-9]*$')
+        list=$(echo "$run" | grep -a '\] OK (' | sed -n \
           's/.*\[\([^]]*\)\] OK (\([^)]*\)) - rtt: \([0-9]*\)ms.*/\3 \1 \2/p' \
           | sort -n | awk '!seen[$2]++' | awk '
-            BEGIN { printf "[" }
-            { printf "%s{\"name\":\"%s\",\"proto\":\"%s\",\"rtt\":%s}", (NR > 1 ? "," : ""), $2, $3, $1 }
-            END { print "]" }'
+            { printf "%s{\"name\":\"%s\",\"proto\":\"%s\",\"rtt\":%s}", (NR > 1 ? "," : ""), $2, $3, $1 }')
+        printf '{"strategy":"%s","live":%s,"servers":[%s]}\n' "$strategy" "${live:-0}" "$list"
         ;;
       active)
         # Строку про выбранный сервер пишет сам прокси при старте.
