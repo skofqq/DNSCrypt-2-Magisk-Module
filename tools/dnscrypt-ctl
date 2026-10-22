@@ -268,6 +268,20 @@ case "$1" in
         servers_auto || { echo "не удалось изменить конфиг"; exit 1; }
         echo "включён автоподбор серверов по фильтрам require_* (применится после restart)"
         ;;
+      live)
+        # Серверы, между которыми прокси сейчас распределяет запросы:
+        # строки «[имя] OK (протокол) - rtt: Nms» после последнего старта.
+        # JSON-массив, отсортированный по rtt; для приложения и проверки DNS.
+        LOGF="$DATADIR/dnscrypt-proxy.log"
+        [ -f "$LOGF" ] || { echo "[]"; exit 1; }
+        start=$(grep -an 'dnscrypt-proxy [0-9]' "$LOGF" | tail -n 1 | cut -d: -f1)
+        tail -n +"${start:-1}" "$LOGF" | grep -a '\] OK (' | sed -n \
+          's/.*\[\([^]]*\)\] OK (\([^)]*\)) - rtt: \([0-9]*\)ms.*/\3 \1 \2/p' \
+          | sort -n | awk '!seen[$2]++' | awk '
+            BEGIN { printf "[" }
+            { printf "%s{\"name\":\"%s\",\"proto\":\"%s\",\"rtt\":%s}", (NR > 1 ? "," : ""), $2, $3, $1 }
+            END { print "]" }'
+        ;;
       active)
         # Строку про выбранный сервер пишет сам прокси при старте.
         line=$(grep -a 'lowest initial latency' "$DATADIR/dnscrypt-proxy.log" 2>/dev/null | tail -n 1)
@@ -279,7 +293,7 @@ case "$1" in
         fi
         ;;
       *)
-        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active"
+        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active|live"
         exit 1
         ;;
     esac
