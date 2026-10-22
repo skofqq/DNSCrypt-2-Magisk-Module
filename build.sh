@@ -15,7 +15,10 @@ OUT="dnscrypt-proxy-android-${VERSION}.zip"
 ITEMS="module.prop customize.sh service.sh post-fs-data.sh uninstall.sh scripts config binary tools META-INF LICENSE.md README.md CHANGELOG.md"
 
 if [ "${1:-}" != "--arm64" ]; then
-  tmp=$(mktemp -d)
+  # Временный каталог рядом со скриптом и с относительным путём: в Git Bash
+  # с MSYS_NO_PATHCONV=1 нативный curl.exe не понимает /tmp/... от mktemp
+  # и падает с «curl: (23) ERROR on write».
+  tmp=$(mktemp -d .dl.XXXXXX)
   for pair in arm:android-arm i386:android-i386 x86_64:android-x86_64; do
     name=${pair%%:*}; dir=${pair##*:}
     [ -s "binary/dnscrypt-proxy-$name" ] && continue
