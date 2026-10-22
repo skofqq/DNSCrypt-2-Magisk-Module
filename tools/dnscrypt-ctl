@@ -276,6 +276,31 @@ case "$1" in
         servers_auto || { echo "не удалось изменить конфиг"; exit 1; }
         echo "включён автоподбор серверов по фильтрам require_* (применится после restart)"
         ;;
+      excluded)
+        # Без аргумента - текущий список; с аргументом - заменить целиком
+        # (имена через запятую, "" или none - очистить).
+        if [ "$#" -ge 3 ]; then
+          case "$3" in none) set -- "$1" "$2" "" ;; esac
+          excluded_set "$3" || { echo "не удалось записать disabled_server_names"; exit 1; }
+          echo "исключены: $(excluded_get) (применится после restart)"
+        else
+          excluded_get
+        fi
+        ;;
+      exclude)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers exclude имя1,имя2"; exit 1; }
+        cur=$(excluded_get)
+        excluded_set "${cur:+$cur,}$3" || exit 1
+        echo "исключены: $(excluded_get) (применится после restart)"
+        ;;
+      include)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers include имя1,имя2"; exit 1; }
+        new=$(excluded_get | tr ',' '\n' | awk -v rm=",$3," '
+          $0 != "" && index(rm, "," $0 ",") == 0 { out = out (out == "" ? "" : ",") $0 }
+          END { print out }')
+        excluded_set "$new" || exit 1
+        echo "исключены: $(excluded_get) (применится после restart)"
+        ;;
       live)
         # Серверы, между которыми прокси сейчас распределяет запросы:
         # строки «[имя] OK (протокол) - rtt: Nms» после последнего старта.
@@ -309,7 +334,7 @@ case "$1" in
         fi
         ;;
       *)
-        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active|live"
+        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active|live|excluded|exclude|include"
         exit 1
         ;;
     esac

@@ -196,6 +196,34 @@ servers_auto() {
   sed -i 's/^\([[:space:]]*\)server_names\([[:space:]]*\)=/\1# server_names\2=/' "$CONFIG"
 }
 
+# Исключённые серверы (disabled_server_names): прокси не берёт их даже при
+# автоподборе. Через этот список приложение исключает серверы по странам.
+excluded_get() {
+  grep -m1 '^[[:space:]]*disabled_server_names[[:space:]]*=' "$CONFIG" 2>/dev/null \
+    | sed 's/.*\[//; s/\].*//' | tr -d " '\""
+}
+
+# Пустой список допустим: это и есть «ничего не исключать».
+excluded_set() {
+  val=""
+  for n in $(echo "$1" | tr ',' ' '); do
+    case "$n" in
+      *[!A-Za-z0-9._-]*) log "excluded: недопустимое имя пропущено: $n"; continue ;;
+    esac
+    if [ -z "$val" ]; then val="'$n'"; else val="$val, '$n'"; fi
+  done
+  config_backup || return 1
+  tmp="$CONFIG.tmp.$$"
+  awk -v val="$val" '
+    BEGIN { done = 0 }
+    !done && /^[[:space:]]*#?[[:space:]]*disabled_server_names[[:space:]]*=/ { print "disabled_server_names = [" val "]"; done = 1; next }
+    !done && /^[[:space:]]*\[/ { print "disabled_server_names = [" val "]"; print ""; done = 1 }
+    { print }
+    END { if (!done) print "disabled_server_names = [" val "]" }
+  ' "$CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$CONFIG"
+}
+
 servers_list() {
   [ -f "$RESOLVERS_CACHE" ] || return 1
   grep '^## ' "$RESOLVERS_CACHE" | sed 's/^## //'
