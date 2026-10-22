@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# Сборка установочного zip. По умолчанию берём то, что лежит в binary/
-# (в репозитории это arm64). Ключ --all докачивает остальные архитектуры.
+# Сборка установочного zip. Бинарники всех архитектур кладутся в пакет:
+# раньше по умолчанию собирался zip только с arm64, и на x86_64 (эмулятор
+# Android Studio, Chromebook) установка обрывалась на «Бинарник отсутствует».
+# В репозитории лежит arm64, остальные докачиваются с релиза dnscrypt-proxy.
+# Ключ --arm64 собирает старый вариант только с arm64.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION=$(sed -n 's/^version=//p' module.prop)
-UPSTREAM=$(sed -n 's/^version=\([0-9.]*\).*/\1/p' module.prop)
+# С 2.2 у модуля своя нумерация, версию dnscrypt-proxy берём отдельно:
+# раньше она вычислялась из module.prop, и --all качал несуществующий 2.4.
+UPSTREAM=2.1.18
 OUT="dnscrypt-proxy-android-${VERSION}.zip"
 ITEMS="module.prop customize.sh service.sh post-fs-data.sh uninstall.sh scripts config binary tools META-INF LICENSE.md README.md CHANGELOG.md"
 
-if [ "${1:-}" = "--all" ]; then
+if [ "${1:-}" != "--arm64" ]; then
   tmp=$(mktemp -d)
   for pair in arm:android-arm i386:android-i386 x86_64:android-x86_64; do
     name=${pair%%:*}; dir=${pair##*:}
+    [ -s "binary/dnscrypt-proxy-$name" ] && continue
     url="https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/${UPSTREAM}/dnscrypt-proxy-${dir/-/_}-${UPSTREAM}.zip"
     echo "качаю $name"
-    curl -sL -o "$tmp/$name.zip" "$url"
+    curl -fsSL -o "$tmp/$name.zip" "$url"
     unzip -oq "$tmp/$name.zip" -d "$tmp"
     cp -f "$tmp/$dir/dnscrypt-proxy" "binary/dnscrypt-proxy-$name"
   done

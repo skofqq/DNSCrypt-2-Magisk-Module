@@ -101,6 +101,17 @@ exclusions_v6() {
   } | grep -oE '\[[0-9a-fA-F:]+\]' | tr -d '[]' | grep ':' | sort -u
 }
 
+# Занят ли локальный UDP-порт кем-то ещё. Читаем /proc/net/udp напрямую:
+# netstat/ss есть не во всех прошивках. Свой прокси к этому моменту уже
+# остановлен, так что любой слушатель - чужой (например, dnscrypt-proxy
+# из box_for_magisk, который по умолчанию тоже сидит на 5354).
+port_busy() {
+  hex=$(printf '%04X' "$1")
+  cat /proc/net/udp /proc/net/udp6 2>/dev/null | awk -v p=":$hex" '
+    NR > 1 && toupper(substr($2, length($2) - 4)) == p { found = 1 }
+    END { exit !found }'
+}
+
 is_true() { [ "$1" = "true" ] || [ "$1" = "1" ] || [ "$1" = "yes" ]; }
 
 dnscrypt_pid() {

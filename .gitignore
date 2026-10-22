@@ -1,3 +1,6 @@
 *.zip
 *.orig
 *.bak
+binary/dnscrypt-proxy-arm
+binary/dnscrypt-proxy-i386
+binary/dnscrypt-proxy-x86_64

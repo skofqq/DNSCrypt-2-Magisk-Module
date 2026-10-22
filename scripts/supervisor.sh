@@ -99,6 +99,11 @@ while :; do
 
   started=$(date +%s)
   cd "$DATADIR" || exit 1
+  if port_busy "$(listen_port)"; then
+    # Иначе прокси молча падает на bind и уходит в цикл перезапусков.
+    log "порт $(listen_port) уже занят другим процессом (box_for_magisk?)," \
+        "смените listen_addresses в $CONFIG; dnscrypt-ctl conflicts покажет подробности"
+  fi
   gid=$(run_gid_numeric)
   # Проверяем смену группы заранее: настройка не должна ронять резолвинг.
   if [ -n "$gid" ] && ! su -g "$gid" 0 -c 'exit 0' >/dev/null 2>&1; then

@@ -55,8 +55,11 @@ nf_build_chain6() {
   port6=$(listen_port6)
   [ -n "$port6" ] || return 1
   $IPT6 -t nat -L -n >/dev/null 2>&1 || return 1
-  $IPT6 -t nat -N $NAT_CHAIN 2>/dev/null || return 1
-  $IPT6 -t nat -F $NAT_CHAIN 2>/dev/null
+  # Цепочка может остаться от прошлого запуска (restart не снимает правила):
+  # -N тогда падает, и раньше это принималось за отсутствие ip6tables nat -
+  # IPv6-цепочка не перестраивалась и жила со старым портом и исключениями.
+  $IPT6 -t nat -N $NAT_CHAIN 2>/dev/null
+  $IPT6 -t nat -F $NAT_CHAIN 2>/dev/null || return 1
 
   for ip in $(exclusions_v6); do
     $IPT6 -t nat -A $NAT_CHAIN -d "$ip" -j RETURN 2>/dev/null

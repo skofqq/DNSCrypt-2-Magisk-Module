@@ -25,8 +25,8 @@
 Собрать zip и прошить в Magisk → Modules → Install from storage:
 
 ```sh
-./build.sh          # только arm64
-./build.sh --all    # докачать arm, i386, x86_64
+./build.sh          # все архитектуры: arm64 из репозитория, arm/i386/x86_64 докачиваются
+./build.sh --arm64  # только arm64
 ```
 
 Либо взять готовый `dnscrypt-proxy-android-<версия>.zip` со страницы релизов.
