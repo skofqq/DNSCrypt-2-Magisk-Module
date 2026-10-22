@@ -116,6 +116,20 @@ port_busy() {
     END { exit !found }'
 }
 
+# Возврат Private DNS в режим, который был до того, как модуль его выключил.
+# Нужен при остановке (переключение на box_for_magisk) и при удалении.
+# settings работает только в загруженной системе.
+restore_private_dns() {
+  saved=$(cat "$PRIVDNS_SAVE" 2>/dev/null) || return 0
+  case "$saved" in
+    "") ;;
+    null) settings delete global private_dns_mode >/dev/null 2>&1 ;;
+    *) settings put global private_dns_mode "$saved" >/dev/null 2>&1 ;;
+  esac
+  rm -f "$PRIVDNS_SAVE"
+  log "Private DNS возвращён в исходный режим (${saved})"
+}
+
 is_true() { [ "$1" = "true" ] || [ "$1" = "1" ] || [ "$1" = "yes" ]; }
 
 dnscrypt_pid() {

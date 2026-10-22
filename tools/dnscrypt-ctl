@@ -89,11 +89,15 @@ case "$1" in
     echo "конфиг: $CONFIG"
     nf_init_cmd
     if nf_check; then echo "перехват IPv4: активен"; else echo "перехват IPv4: правил нет"; fi
-    case "$(nf_ipv6_state)" in
-      redirected) echo "IPv6 DNS: перехвачен" ;;
-      blocked)    echo "IPv6 DNS: заблокирован, система ходит по IPv4 (нет ip6tables nat)" ;;
-      *)          echo "IPv6 DNS: идёт мимо прокси" ;;
-    esac
+    if ! dnscrypt_pid >/dev/null && ! nf_check; then
+      echo "DNS: прокси остановлен, система резолвит сама"
+    else
+      case "$(nf_ipv6_state)" in
+        redirected) echo "IPv6 DNS: перехвачен" ;;
+        blocked)    echo "IPv6 DNS: заблокирован, система ходит по IPv4 (нет ip6tables nat)" ;;
+        *)          echo "IPv6 DNS: идёт мимо прокси" ;;
+      esac
+    fi
     echo "Private DNS: $(settings get global private_dns_mode 2>/dev/null)"
     ;;
   json)
@@ -167,7 +171,7 @@ case "$1" in
       start_supervisor; echo "запущено"
     fi
     ;;
-  stop)    stop_all; nf_stop; touch "$MANUAL_STOP"; echo "остановлено, правила сняты" ;;
+  stop)    stop_all; nf_stop; restore_private_dns; touch "$MANUAL_STOP"; echo "остановлено, правила сняты" ;;
   restart) rm -f "$MANUAL_STOP"; stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
   rules)
     nf_init_cmd
