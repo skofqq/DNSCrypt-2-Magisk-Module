@@ -40,6 +40,13 @@ stop_all() {
 
 start_supervisor() { ( "$MODDIR/scripts/supervisor.sh" >/dev/null 2>&1 & ) ; }
 
+# Забирает ли box_for_magisk порт 53 прямо сейчас: REDIRECT в CLASH_DNS_*
+# (ядро clash) или TPROXY/MARK по порту 53 в mangle-цепочках BOX_*.
+box_takes_dns() {
+  $IPT -t nat -S 2>/dev/null | grep -qE '^-A CLASH_DNS[A-Z_]* .*dport 53 .*-j (REDIRECT|DNAT)' && return 0
+  $IPT -t mangle -S 2>/dev/null | grep -qE '^-A BOX_[A-Z_]* .*dport 53 .*-j (TPROXY|MARK)'
+}
+
 supervisor_running() {
   sup=$(cat "$LOCKFILE" 2>/dev/null)
   [ -n "$sup" ] && kill -0 "$sup" 2>/dev/null
@@ -98,9 +105,9 @@ case "$1" in
     if [ -n "$pid" ]; then running=true; else running=false; fi
     p6=$(listen_port6)
     # port6 - число или null, как port; раньше он отдавался строкой.
-    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":%s,"rules_v4":%s,"redirect_ipv6":"%s","ipv6_dns":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
+    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":%s,"rules_v4":%s,"redirect_ipv6":"%s","ipv6_dns":"%s","box_dns":%s,"tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
       "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "${p6:-null}" \
-      "$rules" "$redirect_ipv6" "$(nf_ipv6_state)" "$tether_redirect" \
+      "$rules" "$redirect_ipv6" "$(nf_ipv6_state)" "$(box_takes_dns && echo true || echo false)" "$tether_redirect" \
       "$(settings get global private_dns_mode 2>/dev/null)" \
       "$CONFIG" \
       "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)" \
@@ -290,7 +297,10 @@ case "$1" in
     fi
     echo
     echo "--- известные модули ---"
-    if $IPT -t nat -S 2>/dev/null | grep -q 'CLASH_DNS' || $IPT -t mangle -S 2>/dev/null | grep -q 'BOX_'; then
+    # Наличие цепочек box ещё не значит перехват DNS: в режиме tproxy его
+    # BOX_LOCAL/BOX_EXTERNAL пропускают порт 53 (RETURN). Считаем конфликтом
+    # только правила, которые реально заворачивают 53.
+    if box_takes_dns; then
       echo "  box_for_magisk: обнаружен, он тоже забирает порт 53."
       echo "    Держать два перехватчика DNS нельзя. Рабочая схема:"
       echo "    dnscrypt-ctl set redirect_ipv4 false; set redirect_ipv6 off"
