@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Сборка установочного zip. Бинарники всех архитектур кладутся в пакет:
-# раньше по умолчанию собирался zip только с arm64, и на x86_64 (эмулятор
-# Android Studio, Chromebook) установка обрывалась на «Бинарник отсутствует».
-# В репозитории лежит arm64, остальные докачиваются с релиза dnscrypt-proxy.
-# Ключ --arm64 собирает старый вариант только с arm64.
+# Сборка установочного zip для Android-устройств на ARM: arm64-v8a и armeabi-v7a.
+# В репозитории лежит arm64, arm докачивается с релиза dnscrypt-proxy.
+# Ключ --arm64 собирает пакет только с arm64. Ключ --with-x86 добавляет i386
+# и x86_64 для локальных тестовых сборок; в релиз такие пакеты не выкладываются.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -14,12 +13,17 @@ UPSTREAM=2.1.18
 OUT="dnscrypt-proxy-android-${VERSION}.zip"
 ITEMS="module.prop customize.sh service.sh post-fs-data.sh uninstall.sh scripts config binary tools META-INF LICENSE.md README.md CHANGELOG.md"
 
+ARCHES="arm:android-arm"
+[ "${1:-}" = "--with-x86" ] && ARCHES="$ARCHES i386:android-i386 x86_64:android-x86_64"
+# Бинарники x86 от прошлых сборок в пакет не попадают, если их не просили.
+[ "${1:-}" = "--with-x86" ] || rm -f binary/dnscrypt-proxy-i386 binary/dnscrypt-proxy-x86_64
+
 if [ "${1:-}" != "--arm64" ]; then
   # Временный каталог рядом со скриптом и с относительным путём: в Git Bash
   # с MSYS_NO_PATHCONV=1 нативный curl.exe не понимает /tmp/... от mktemp
   # и падает с «curl: (23) ERROR on write».
   tmp=$(mktemp -d .dl.XXXXXX)
-  for pair in arm:android-arm i386:android-i386 x86_64:android-x86_64; do
+  for pair in $ARCHES; do
     name=${pair%%:*}; dir=${pair##*:}
     [ -s "binary/dnscrypt-proxy-$name" ] && continue
     url="https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/${UPSTREAM}/dnscrypt-proxy-${dir/-/_}-${UPSTREAM}.zip"

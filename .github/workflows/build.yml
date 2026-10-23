@@ -1,4 +1,4 @@
-# Проверка скриптов и сборка установочного zip со всеми архитектурами.
+# Проверка скриптов и сборка установочного zip для arm64-v8a и armeabi-v7a.
 # На тег вида 2.4.1 собранный zip прикладывается к релизу - так в релиз
 # больше не попадёт пакет с одним arm64, как случилось с 2.4.
 name: build
@@ -39,8 +39,11 @@ jobs:
       - name: Проверка содержимого
         run: |
           zip="$ZIP"
-          for a in arm arm64 i386 x86_64; do
+          for a in arm arm64; do
             unzip -l "$zip" | grep -q "binary/dnscrypt-proxy-$a$" || { echo "нет бинарника $a"; exit 1; }
+          done
+          for a in i386 x86_64; do
+            ! unzip -l "$zip" | grep -q "binary/dnscrypt-proxy-$a$" || { echo "лишний бинарник $a"; exit 1; }
           done
           unzip -l "$zip" | grep -q 'META-INF/com/google/android/update-binary'
 

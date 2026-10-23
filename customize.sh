@@ -13,6 +13,7 @@ LEGACY=/data/media/0/dnscrypt-proxy
 case "$ARCH" in
   arm)   BINARY_PATH=$MODPATH/binary/dnscrypt-proxy-arm ;;
   arm64) BINARY_PATH=$MODPATH/binary/dnscrypt-proxy-arm64 ;;
+  # Релизные пакеты собираются только для ARM; build.sh --with-x86 - для локальных тестов.
   x86)   BINARY_PATH=$MODPATH/binary/dnscrypt-proxy-i386 ;;
   x64)   BINARY_PATH=$MODPATH/binary/dnscrypt-proxy-x86_64 ;;
   *)     abort "! Неизвестная архитектура: $ARCH" ;;
@@ -26,7 +27,10 @@ mkdir -p "$MODPATH/system/bin"
 if [ -f "$BINARY_PATH" ]; then
   cp -af "$BINARY_PATH" "$MODPATH/system/bin/dnscrypt-proxy"
 else
-  abort "! Бинарник для $ARCH отсутствует в пакете!"
+  case "$ARCH" in
+    x86|x64) abort "! Архитектура $ARCH не поддерживается: пакет собран для arm64-v8a и armeabi-v7a" ;;
+    *) abort "! Бинарник для $ARCH отсутствует в пакете!" ;;
+  esac
 fi
 cp -af "$MODPATH/tools/dnscrypt-ctl" "$MODPATH/system/bin/dnscrypt-ctl"
 
