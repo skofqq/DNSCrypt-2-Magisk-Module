@@ -17,7 +17,7 @@ dnscrypt-ctl <команда>
   reset     вернуть все настройки модуля к значениям по умолчанию
   servers <подкоманда>  список резолверов и выбор серверов (см. ниже)
   start     запустить присмотр (supervisor)
-  stop      остановить прокси и снять правила перехвата
+  stop      остановить прокси и снять правила (сохраняется после перезагрузки)
   restart   перезапустить с перечитыванием конфига
   rules     показать цепочку $NAT_CHAIN
   conflicts кто ещё перехватывает DNS: box_for_magisk, zapret2 и прочие
@@ -40,6 +40,52 @@ stop_all() {
 
 start_supervisor() { ( "$MODDIR/scripts/supervisor.sh" >/dev/null 2>&1 & ) ; }
 
+# Забирает ли box_for_magisk порт 53 прямо сейчас: REDIRECT в CLASH_DNS_*
+# (ядро clash) или TPROXY/MARK по порту 53 в mangle-цепочках BOX_*.
+box_takes_dns() {
+  $IPT -t nat -S 2>/dev/null | grep -qE '^-A CLASH_DNS[A-Z_]* .*dport 53 .*-j (REDIRECT|DNAT)' && return 0
+  $IPT -t mangle -S 2>/dev/null | grep -qE '^-A BOX_[A-Z_]* .*dport 53 .*-j (TPROXY|MARK)'
+}
+
+supervisor_running() {
+  sup=$(cat "$LOCKFILE" 2>/dev/null)
+  [ -n "$sup" ] && kill -0 "$sup" 2>/dev/null
+}
+
+# Сумма пакетов, прошедших через DNAT нашей цепочки (IPv4 и IPv6).
+dnat_packets() {
+  { $IPT -t nat -L $NAT_CHAIN -v -n -x 2>/dev/null; $IPT6 -t nat -L $NAT_CHAIN -v -n -x 2>/dev/null; } \
+    | awk '/DNAT/ { s += $1 } END { print s + 0 }'
+}
+
+# Проверка значения перед записью: иначе «применится после restart»
+# обещало то, что load_settings потом молча отбросит.
+valid_value() {
+  case "$1" in
+    autostart|redirect_ipv4|tether_redirect|disable_private_dns)
+      case "$2" in true|false) return 0 ;; esac
+      echo "$1: допустимо true или false" ;;
+    redirect_ipv6)
+      case "$2" in auto|redirect|off) return 0 ;; esac
+      echo "redirect_ipv6: допустимо auto, redirect или off" ;;
+    restart_delay_max)
+      case "$2" in ""|*[!0-9]*) ;; *) [ "$2" -ge 5 ] && [ "$2" -le 600 ] && return 0 ;; esac
+      echo "restart_delay_max: целое число от 5 до 600" ;;
+    run_gid)
+      case "$2" in ""|net_admin|inet|net_raw) return 0 ;; *[!0-9]*) ;; *) return 0 ;; esac
+      echo "run_gid: net_admin, inet, net_raw, числовой GID или default" ;;
+  esac
+  return 1
+}
+
+
+# Кто дёрнул управляющую команду: при двух модулях и двух приложениях иначе
+# не понять, откуда взялся неожиданный старт или стоп.
+ctl_caller() {
+  pp=$(cat /proc/$PPID/cmdline 2>/dev/null | tr '\0' ' ' | cut -c1-80)
+  echo "${pp:-pid $PPID}"
+}
+case "$1" in start|stop|restart) log "dnscrypt-ctl $1 (вызвал: $(ctl_caller))" ;; esac
 
 case "$1" in
   status)
@@ -51,6 +97,15 @@ case "$1" in
     echo "конфиг: $CONFIG"
     nf_init_cmd
     if nf_check; then echo "перехват IPv4: активен"; else echo "перехват IPv4: правил нет"; fi
+    if ! dnscrypt_pid >/dev/null && ! nf_check; then
+      echo "DNS: прокси остановлен, система резолвит сама"
+    else
+      case "$(nf_ipv6_state)" in
+        redirected) echo "IPv6 DNS: перехвачен" ;;
+        blocked)    echo "IPv6 DNS: заблокирован, система ходит по IPv4 (нет ip6tables nat)" ;;
+        *)          echo "IPv6 DNS: идёт мимо прокси" ;;
+      esac
+    fi
     echo "Private DNS: $(settings get global private_dns_mode 2>/dev/null)"
     ;;
   json)
@@ -60,14 +115,17 @@ case "$1" in
     nf_init_cmd
     if nf_check; then rules=true; else rules=false; fi
     if [ -n "$pid" ]; then running=true; else running=false; fi
-    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":"%s","rules_v4":%s,"redirect_ipv6":"%s","tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s}\n' \
-      "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "$(listen_port6)" \
-      "$rules" "$redirect_ipv6" "$tether_redirect" \
+    p6=$(listen_port6)
+    # port6 - число или null, как port; раньше он отдавался строкой.
+    printf '{"running":%s,"pid":%s,"supervisor_pid":%s,"port":%s,"port6":%s,"rules_v4":%s,"redirect_ipv6":"%s","ipv6_dns":"%s","box_dns":%s,"tether_redirect":%s,"private_dns":"%s","config":"%s","version":"%s","servers":"%s","resolvers_cached":%s,"manual_stop":%s}\n' \
+      "$running" "${pid:-null}" "${sup:-null}" "$(listen_port)" "${p6:-null}" \
+      "$rules" "$redirect_ipv6" "$(nf_ipv6_state)" "$(box_takes_dns && echo true || echo false)" "$tether_redirect" \
       "$(settings get global private_dns_mode 2>/dev/null)" \
       "$CONFIG" \
       "$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)" \
       "$(servers_get)" \
-      "$([ -f "$RESOLVERS_CACHE" ] && echo true || echo false)"
+      "$([ -f "$RESOLVERS_CACHE" ] && echo true || echo false)" \
+      "$([ -f "$MANUAL_STOP" ] && echo true || echo false)"
     ;;
   set)
     # Значение обязано быть передано, но пустым быть может: для run_gid пустота
@@ -79,9 +137,11 @@ case "$1" in
         # default и none - псевдонимы пустоты: в шелле пустой аргумент легко
         # теряется между слоями кавычек.
         case "$3" in default|none) set -- "$1" "$2" "" ;; esac
+        valid_value "$2" "$3" || exit 1
         ;;
       autostart|redirect_ipv4|redirect_ipv6|tether_redirect|disable_private_dns|restart_delay_max)
         [ -n "$3" ] || { echo "пустое значение допустимо только для run_gid"; exit 1; }
+        valid_value "$2" "$3" || exit 1
         ;;
       mirror_config)
         echo "mirror_config удалён в 2.3: модуль больше ничего не держит"
@@ -111,13 +171,30 @@ case "$1" in
     chmod 0600 "$SETTINGS" 2>/dev/null
     echo "настройки сброшены (применится после dnscrypt-ctl restart)"
     ;;
-  start)   start_supervisor; echo "запущено" ;;
-  stop)    stop_all; nf_stop; echo "остановлено, правила сняты" ;;
-  restart) stop_all; sleep 1; start_supervisor; echo "перезапущено" ;;
+  start)
+    if supervisor_running; then
+      echo "уже запущено"
+    else
+      rm -f "$MANUAL_STOP"
+      start_supervisor; echo "запущено"
+    fi
+    ;;
+  stop)    stop_all; nf_stop; restore_private_dns; touch "$MANUAL_STOP"; echo "остановлено, правила сняты" ;;
+  restart)
+    # restart перечитывает конфиг у работающего прокси, но не поднимает
+    # остановленный вручную: иначе «Сохранить» в приложении включало бы его
+    # за спиной у пользователя, переключившегося на box_for_magisk.
+    if [ -f "$MANUAL_STOP" ] && ! supervisor_running; then
+      echo "прокси остановлен вручную, изменения применятся при следующем запуске (dnscrypt-ctl start)"
+    else
+      stop_all; sleep 1; start_supervisor; echo "перезапущено"
+    fi
+    ;;
   rules)
     nf_init_cmd
     $IPT -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null || echo "цепочки нет"
-    $IPT6 -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null
+    $IPT6 -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null \
+      || echo "IPv6: цепочки нет (в ядре может не быть ip6tables nat)"
     ;;
   log)      tail -n "${2:-50}" "$LOGFILE" 2>/dev/null || { echo "журнала нет"; exit 1; } ;;
   proxylog) tail -n "${2:-50}" "$DATADIR/dnscrypt-proxy.log" 2>/dev/null \
@@ -127,9 +204,23 @@ case "$1" in
     port=$(listen_port)
     if command -v nslookup >/dev/null 2>&1; then
       nslookup example.com 127.0.0.1 -port="$port" 2>&1 | tail -n 6
+    elif port_busy "$port"; then
+      echo "прокси слушает порт $port"
     else
-      echo "nslookup недоступен, проверяю только сокет"
-      netstat -ltunp 2>/dev/null | grep ":$port"
+      echo "на порту $port никто не слушает"
+    fi
+    # Главное - доходят ли системные запросы до прокси. Резолвим уникальное
+    # имя через системный резолвер (ping) и смотрим, выросли ли счётчики DNAT.
+    nf_init_cmd
+    before=$(dnat_packets)
+    ping -c 1 -W 1 "dnscrypt-test-$$-$(date +%s).example.com" >/dev/null 2>&1
+    after=$(dnat_packets)
+    if [ "$after" -gt "$before" ]; then
+      echo "системный DNS идёт через прокси (пакетов через перехват: $((after - before)))"
+    else
+      echo "системный DNS НЕ дошёл до перехвата: запросы идут мимо прокси"
+      echo "IPv6 DNS: $(nf_ipv6_state); подробности: dnscrypt-ctl conflicts"
+      exit 1
     fi
     ;;
   export|import)
@@ -195,6 +286,53 @@ case "$1" in
         servers_auto || { echo "не удалось изменить конфиг"; exit 1; }
         echo "включён автоподбор серверов по фильтрам require_* (применится после restart)"
         ;;
+      excluded)
+        # Без аргумента - текущий список; с аргументом - заменить целиком
+        # (имена через запятую, "" или none - очистить).
+        if [ "$#" -ge 3 ]; then
+          case "$3" in none) set -- "$1" "$2" "" ;; esac
+          excluded_set "$3" || { echo "не удалось записать disabled_server_names"; exit 1; }
+          echo "исключены: $(excluded_get) (применится после restart)"
+        else
+          excluded_get
+        fi
+        ;;
+      exclude)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers exclude имя1,имя2"; exit 1; }
+        cur=$(excluded_get)
+        excluded_set "${cur:+$cur,}$3" || exit 1
+        echo "исключены: $(excluded_get) (применится после restart)"
+        ;;
+      include)
+        [ -n "$3" ] || { echo "использование: dnscrypt-ctl servers include имя1,имя2"; exit 1; }
+        new=$(excluded_get | tr ',' '\n' | awk -v rm=",$3," '
+          $0 != "" && index(rm, "," $0 ",") == 0 { out = out (out == "" ? "" : ",") $0 }
+          END { print out }')
+        excluded_set "$new" || exit 1
+        echo "исключены: $(excluded_get) (применится после restart)"
+        ;;
+      live)
+        # Серверы, между которыми прокси сейчас распределяет запросы:
+        # строки «[имя] OK (протокол) - rtt: Nms» после последнего старта.
+        # Одна строка JSON для приложения: стратегия балансировки из конфига
+        # (по умолчанию p2 - два самых быстрых), число живых серверов из строки
+        # «live servers: N» и список, отсортированный по rtt.
+        LOGF="$DATADIR/dnscrypt-proxy.log"
+        strategy=$(grep -m1 '^[[:space:]]*lb_strategy' "$CONFIG" 2>/dev/null | sed "s/.*=[[:space:]]*//; s/[\"' ]//g")
+        [ -n "$strategy" ] || strategy=p2
+        if [ ! -f "$LOGF" ]; then
+          printf '{"strategy":"%s","live":0,"servers":[]}\n' "$strategy"
+          exit 1
+        fi
+        start=$(grep -an 'dnscrypt-proxy [0-9]' "$LOGF" | tail -n 1 | cut -d: -f1)
+        run=$(tail -n +"${start:-1}" "$LOGF")
+        live=$(echo "$run" | grep -ao 'live servers: [0-9]*' | tail -n 1 | grep -o '[0-9]*$')
+        list=$(echo "$run" | grep -a '\] OK (' | sed -n \
+          's/.*\[\([^]]*\)\] OK (\([^)]*\)) - rtt: \([0-9]*\)ms.*/\3 \1 \2/p' \
+          | sort -n | awk '!seen[$2]++' | awk '
+            { printf "%s{\"name\":\"%s\",\"proto\":\"%s\",\"rtt\":%s}", (NR > 1 ? "," : ""), $2, $3, $1 }')
+        printf '{"strategy":"%s","live":%s,"servers":[%s]}\n' "$strategy" "${live:-0}" "$list"
+        ;;
       active)
         # Строку про выбранный сервер пишет сам прокси при старте.
         line=$(grep -a 'lowest initial latency' "$DATADIR/dnscrypt-proxy.log" 2>/dev/null | tail -n 1)
@@ -206,7 +344,7 @@ case "$1" in
         fi
         ;;
       *)
-        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active"
+        echo "dnscrypt-ctl servers list|raw|relays|info|get|set|add|remove|auto|active|live|excluded|exclude|include"
         exit 1
         ;;
     esac
@@ -230,14 +368,25 @@ case "$1" in
     fi
     echo
     echo "--- известные модули ---"
-    if $IPT -t nat -S 2>/dev/null | grep -q 'CLASH_DNS' || $IPT -t mangle -S 2>/dev/null | grep -q 'BOX_'; then
+    # Наличие цепочек box ещё не значит перехват DNS: в режиме tproxy его
+    # BOX_LOCAL/BOX_EXTERNAL пропускают порт 53 (RETURN). Считаем конфликтом
+    # только правила, которые реально заворачивают 53.
+    if box_takes_dns; then
       echo "  box_for_magisk: обнаружен, он тоже забирает порт 53."
       echo "    Держать два перехватчика DNS нельзя. Рабочая схема:"
       echo "    dnscrypt-ctl set redirect_ipv4 false; set redirect_ipv6 off"
       echo "    и в конфиге clash/sing-box указать сервером 127.0.0.1:$(listen_port)."
       echo "    Чтобы запросы самого прокси шли мимо box: set run_gid net_admin"
+    elif [ -d /data/adb/modules/box_for_root ] || [ -d /data/adb/box ]; then
+      echo "  box_for_magisk: установлен, сейчас не перехватывает DNS."
+      echo "    Когда он включится, он заберёт порт 53 себе. Его собственный"
+      echo "    dnscrypt-proxy по умолчанию тоже слушает 5354 - не включайте оба."
     else
       echo "  box_for_magisk: не обнаружен"
+    fi
+    port=$(listen_port)
+    if port_busy "$port" && ! dnscrypt_pid >/dev/null; then
+      echo "  порт $port занят чужим процессом, наш прокси не сможет его открыть"
     fi
     if $IPT -t mangle -S 2>/dev/null | grep -qE 'ZAPRET2_|Z2O_|Z2I_'; then
       echo "  zapret2: обнаружен. Конфликта нет - он работает в mangle по портам"

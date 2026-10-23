@@ -60,6 +60,9 @@ disable_private_dns() {
   is_true "$disable_private_dns" || return 0
   current=$(settings get global private_dns_mode 2>/dev/null)
   [ "$current" = "off" ] && return 0
+  # Запоминаем исходный режим, чтобы вернуть его при удалении модуля.
+  # Пустое значение и null - системное умолчание (автоматический режим).
+  [ -f "$PRIVDNS_SAVE" ] || echo "${current:-null}" >"$PRIVDNS_SAVE"
   settings put global private_dns_mode off 2>/dev/null \
     || cmd settings put global private_dns_mode off 2>/dev/null
   log "Private DNS переключён в off (было: ${current:-неизвестно})"
@@ -99,6 +102,11 @@ while :; do
 
   started=$(date +%s)
   cd "$DATADIR" || exit 1
+  if port_busy "$(listen_port)"; then
+    # Иначе прокси молча падает на bind и уходит в цикл перезапусков.
+    log "порт $(listen_port) уже занят другим процессом (box_for_magisk?)," \
+        "смените listen_addresses в $CONFIG; dnscrypt-ctl conflicts покажет подробности"
+  fi
   gid=$(run_gid_numeric)
   # Проверяем смену группы заранее: настройка не должна ронять резолвинг.
   if [ -n "$gid" ] && ! su -g "$gid" 0 -c 'exit 0' >/dev/null 2>&1; then
@@ -111,9 +119,17 @@ while :; do
     # Опции su обязаны стоять до имени пользователя, иначе они уходят в шелл.
     su -g "$gid" 0 -c "cd '$DATADIR' && exec '$BIN' -config '$CONFIG'" >>"$DATADIR/stdout.log" 2>&1 &
     pid=$!
-    # su остаётся посредником, поэтому pid самого прокси ищем отдельно.
-    sleep 1
-    real=$(pidof dnscrypt-proxy 2>/dev/null | tr ' ' '\n' | tail -1)
+    # su остаётся посредником, поэтому pid самого прокси ищем отдельно -
+    # по полному пути нашего бинарника. Раньше брался последний pid из
+    # `pidof dnscrypt-proxy`, а это мог оказаться dnscrypt-proxy из
+    # box_for_magisk: supervisor тогда следил за чужим процессом.
+    i=0
+    while [ $i -lt 10 ]; do
+      sleep 0.5
+      real=$(own_proxy_pid)
+      [ -n "$real" ] && break
+      i=$((i + 1))
+    done
     [ -n "$real" ] && pid=$real
   else
     "$BIN" -config "$CONFIG" >>"$DATADIR/stdout.log" 2>&1 &
@@ -128,6 +144,7 @@ while :; do
       log "правила перехвата пропали (netd?), ставлю заново"
       nf_start
     fi
+    nf_guard6
     trim_logs
   done
   wait "$pid" 2>/dev/null

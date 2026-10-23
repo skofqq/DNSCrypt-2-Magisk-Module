@@ -13,6 +13,10 @@ SETTINGS="$DATADIR/module.conf"
 LOGFILE="$DATADIR/module.log"
 PIDFILE="$DATADIR/dnscrypt-proxy.pid"
 LOCKFILE="$DATADIR/supervisor.pid"
+PRIVDNS_SAVE="$DATADIR/.private_dns_mode"
+# Отметка «остановлен вручную»: dnscrypt-ctl stop (кнопка в приложении)
+# переживает перезагрузку, start/restart её снимают.
+MANUAL_STOP="$DATADIR/.manual_stop"
 BIN="$MODDIR/system/bin/dnscrypt-proxy"
 
 NAT_CHAIN=DNSCRYPT
@@ -101,6 +105,41 @@ exclusions_v6() {
   } | grep -oE '\[[0-9a-fA-F:]+\]' | tr -d '[]' | grep ':' | sort -u
 }
 
+# Занят ли локальный UDP-порт кем-то ещё. Читаем /proc/net/udp напрямую:
+# netstat/ss есть не во всех прошивках. Свой прокси к этому моменту уже
+# остановлен, так что любой слушатель - чужой (например, dnscrypt-proxy
+# из box_for_magisk, который по умолчанию тоже сидит на 5354).
+port_busy() {
+  hex=$(printf '%04X' "$1")
+  cat /proc/net/udp /proc/net/udp6 2>/dev/null | awk -v p=":$hex" '
+    NR > 1 && toupper(substr($2, length($2) - 4)) == p { found = 1 }
+    END { exit !found }'
+}
+
+# Возврат Private DNS в режим, который был до того, как модуль его выключил.
+# Нужен при остановке (переключение на box_for_magisk) и при удалении.
+# settings работает только в загруженной системе.
+restore_private_dns() {
+  saved=$(cat "$PRIVDNS_SAVE" 2>/dev/null) || return 0
+  case "$saved" in
+    "") ;;
+    null) settings delete global private_dns_mode >/dev/null 2>&1 ;;
+    *) settings put global private_dns_mode "$saved" >/dev/null 2>&1 ;;
+  esac
+  rm -f "$PRIVDNS_SAVE"
+  log "Private DNS возвращён в исходный режим (${saved})"
+}
+
+# pid нашего dnscrypt-proxy: первый аргумент командной строки - наш $BIN.
+# Имя процесса у box_for_magisk такое же, поэтому pidof здесь не годится.
+own_proxy_pid() {
+  for d in /proc/[0-9]*; do
+    arg0=$(tr '\0' '\n' <"$d/cmdline" 2>/dev/null | head -n 1)
+    [ "$arg0" = "$BIN" ] && { echo "${d#/proc/}"; return 0; }
+  done
+  return 1
+}
+
 is_true() { [ "$1" = "true" ] || [ "$1" = "1" ] || [ "$1" = "yes" ]; }
 
 dnscrypt_pid() {
@@ -165,6 +204,34 @@ servers_auto() {
   grep -q '^[[:space:]]*server_names[[:space:]]*=' "$CONFIG" 2>/dev/null || return 0
   config_backup || return 1
   sed -i 's/^\([[:space:]]*\)server_names\([[:space:]]*\)=/\1# server_names\2=/' "$CONFIG"
+}
+
+# Исключённые серверы (disabled_server_names): прокси не берёт их даже при
+# автоподборе. Через этот список приложение исключает серверы по странам.
+excluded_get() {
+  grep -m1 '^[[:space:]]*disabled_server_names[[:space:]]*=' "$CONFIG" 2>/dev/null \
+    | sed 's/.*\[//; s/\].*//' | tr -d " '\""
+}
+
+# Пустой список допустим: это и есть «ничего не исключать».
+excluded_set() {
+  val=""
+  for n in $(echo "$1" | tr ',' ' '); do
+    case "$n" in
+      *[!A-Za-z0-9._-]*) log "excluded: недопустимое имя пропущено: $n"; continue ;;
+    esac
+    if [ -z "$val" ]; then val="'$n'"; else val="$val, '$n'"; fi
+  done
+  config_backup || return 1
+  tmp="$CONFIG.tmp.$$"
+  awk -v val="$val" '
+    BEGIN { done = 0 }
+    !done && /^[[:space:]]*#?[[:space:]]*disabled_server_names[[:space:]]*=/ { print "disabled_server_names = [" val "]"; done = 1; next }
+    !done && /^[[:space:]]*\[/ { print "disabled_server_names = [" val "]"; print ""; done = 1 }
+    { print }
+    END { if (!done) print "disabled_server_names = [" val "]" }
+  ' "$CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$CONFIG"
 }
 
 servers_list() {

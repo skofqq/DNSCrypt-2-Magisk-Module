@@ -14,4 +14,12 @@ if ! is_true "$autostart"; then
   exit 0
 fi
 
+# Остановлен из приложения или dnscrypt-ctl stop - так и остаётся после
+# перезагрузки. Это позволяет держать включёнными в Magisk и этот модуль,
+# и box_for_magisk, а переключаться между ними кнопками в приложениях.
+if [ -f "$MANUAL_STOP" ]; then
+  log "остановлен вручную (dnscrypt-ctl stop), при загрузке не поднимаю"
+  exit 0
+fi
+
 ( "$MODDIR/scripts/supervisor.sh" >/dev/null 2>&1 & )
