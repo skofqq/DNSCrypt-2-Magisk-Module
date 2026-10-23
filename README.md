@@ -14,7 +14,7 @@
 |---|---|
 | модуль Magisk | установка dnscrypt-proxy 2.1.18, перехват DNS, супервизор процесса, восстановление правил после netd |
 | `dnscrypt-ctl` | управление из командной строки: состояние, настройки, выбор и исключение серверов, журналы, диагностика |
-| DNSCrypt Manager | приложение для Android с графическим интерфейсом поверх `dnscrypt-ctl`, APK публикуется в [релизах](https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/latest) |
+| Shieldy | приложение для Android с графическим интерфейсом поверх `dnscrypt-ctl`, APK публикуется в [релизах](https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/latest) |
 
 ## Требования
 
@@ -160,7 +160,7 @@ dnscrypt-ctl servers exclude|include a,b
 Два перехватчика порта 53 одновременно не работают. Поддерживаются две схемы.
 
 **Переключение.** Оба модуля включены в Magisk, активен один из них. Переключение
-выполняется кнопками Start/Stop в приложениях (DNSCrypt Manager и Box) или командами
+выполняется кнопками Start/Stop в приложениях (Shieldy и Box) или командами
 `dnscrypt-ctl stop` / `start`. Остановка dnscrypt-proxy снимает правила, восстанавливает
 Private DNS и сохраняется после перезагрузки. Box в режиме tproxy не забирает
 порт 53 (`BOX_LOCAL` возвращает его), такая конфигурация распознаётся `conflicts` и полем `box_dns`.
@@ -210,10 +210,13 @@ dns:
 пакеты прокси проходят через NFQUEUE без десинхронизации: `--dpi-desync-any-protocol`
 в пресетах не включён.
 
-## DNSCrypt Manager
+## Shieldy (ранее DNSCrypt Manager)
 
-Приложение (`DNSCryptManager-<версия>.apk` в релизе) управляет модулем через
+Приложение `Shieldy-<версия>.apk` из релиза, пакет `com.skofqq.shieldy`. Управляет модулем через
 `dnscrypt-ctl` и не устанавливает модуль самостоятельно.
+
+При первом запуске Shieldy переносит настройки из DNSCrypt Manager (`io.github.skofqq.dnscryptmanager`),
+если тот установлен; после переноса старое приложение можно удалить. Magisk запрашивает root для нового пакета.
 
 * **Статус:**
   * состояние прокси и время работы, кнопки Start/Stop;
