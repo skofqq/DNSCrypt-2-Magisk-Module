@@ -119,9 +119,17 @@ while :; do
     # Опции su обязаны стоять до имени пользователя, иначе они уходят в шелл.
     su -g "$gid" 0 -c "cd '$DATADIR' && exec '$BIN' -config '$CONFIG'" >>"$DATADIR/stdout.log" 2>&1 &
     pid=$!
-    # su остаётся посредником, поэтому pid самого прокси ищем отдельно.
-    sleep 1
-    real=$(pidof dnscrypt-proxy 2>/dev/null | tr ' ' '\n' | tail -1)
+    # su остаётся посредником, поэтому pid самого прокси ищем отдельно -
+    # по полному пути нашего бинарника. Раньше брался последний pid из
+    # `pidof dnscrypt-proxy`, а это мог оказаться dnscrypt-proxy из
+    # box_for_magisk: supervisor тогда следил за чужим процессом.
+    i=0
+    while [ $i -lt 10 ]; do
+      sleep 0.5
+      real=$(own_proxy_pid)
+      [ -n "$real" ] && break
+      i=$((i + 1))
+    done
     [ -n "$real" ] && pid=$real
   else
     "$BIN" -config "$CONFIG" >>"$DATADIR/stdout.log" 2>&1 &

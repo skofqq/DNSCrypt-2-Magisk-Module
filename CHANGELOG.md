@@ -44,6 +44,9 @@
 * `dnscrypt-ctl servers excluded|exclude|include` - список исключённых серверов
   (`disabled_server_names`): прокси не берёт их даже при автоподборе. Через него
   приложение исключает серверы, например по стране
+* с `run_gid` supervisor мог следить за чужим процессом: pid прокси брался
+  последним из `pidof dnscrypt-proxy`, а так же называется dnscrypt-proxy
+  из box_for_magisk. Теперь pid ищется по полному пути нашего бинарника
 * `start`/`stop`/`restart` пишут в журнал модуля, какой процесс их вызвал
 * `dnscrypt-ctl start` при уже работающем прокси отвечает «уже запущено»
 * `conflicts` предупреждает об установленном, но выключенном box_for_magisk

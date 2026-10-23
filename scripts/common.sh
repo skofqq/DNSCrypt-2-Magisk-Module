@@ -130,6 +130,16 @@ restore_private_dns() {
   log "Private DNS возвращён в исходный режим (${saved})"
 }
 
+# pid нашего dnscrypt-proxy: первый аргумент командной строки - наш $BIN.
+# Имя процесса у box_for_magisk такое же, поэтому pidof здесь не годится.
+own_proxy_pid() {
+  for d in /proc/[0-9]*; do
+    arg0=$(tr '\0' '\n' <"$d/cmdline" 2>/dev/null | head -n 1)
+    [ "$arg0" = "$BIN" ] && { echo "${d#/proc/}"; return 0; }
+  done
+  return 1
+}
+
 is_true() { [ "$1" = "true" ] || [ "$1" = "1" ] || [ "$1" = "yes" ]; }
 
 dnscrypt_pid() {
