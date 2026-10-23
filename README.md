@@ -1,124 +1,175 @@
 # DNSCrypt-Proxy 2 для Magisk
 
-Системный шифрованный DNS для Android: DNSCrypt v2, DoH, Anonymized DNSCrypt, ODoH.
-Весь DNS устройства заворачивается на локальный прокси, включая приложения,
-которые ходят к своим резолверам мимо системных настроек.
+Модуль Magisk, который переводит весь DNS-трафик Android на локальный
+[dnscrypt-proxy](https://github.com/DNSCrypt/dnscrypt-proxy) и отправляет запросы
+наружу в зашифрованном виде: DNSCrypt v2, DNS-over-HTTPS, Anonymized DNSCrypt, ODoH.
 
-Самостоятельный проект: скрипты модуля, супервизор, netfilter-слой, утилита
-`dnscrypt-ctl` и приложение-менеджер написаны здесь. Вырос из заброшенного
-[d3cim/dnscrypt-proxy-android](https://github.com/d3cim/dnscrypt-proxy-android) —
-см. [Благодарности](#благодарности).
+Перехват выполняется на уровне netfilter. Поэтому через прокси проходят и запросы
+приложений, которые обращаются к собственным резолверам на порт 53 в обход
+системных настроек DNS.
 
-Проверялось на Magisk 30.x, Android 15–16, arm64.
-Внутри dnscrypt-proxy 2.1.18 (июль 2026), включая PQDNSCrypt.
+Состав пакета:
 
-## Что входит
+| Компонент | Назначение |
+|---|---|
+| модуль Magisk | установка dnscrypt-proxy 2.1.18, перехват DNS, супервизор процесса, восстановление правил после netd |
+| `dnscrypt-ctl` | управление из командной строки: состояние, настройки, выбор и исключение серверов, журналы, диагностика |
+| DNSCrypt Manager | приложение для Android с графическим интерфейсом поверх `dnscrypt-ctl`, APK публикуется в [релизах](https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/latest) |
+
+## Требования
 
 | | |
 |---|---|
-| Модуль Magisk | перехват DNS, супервизор процесса, восстановление правил после netd |
-| `dnscrypt-ctl` | управление из шелла: состояние, настройки, серверы, журналы, конфликты |
-| DNSCrypt Manager | приложение с графическим интерфейсом, APK лежит в [релизе](https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/latest) |
+| Root | Magisk 20.4 и новее. Проверено на Magisk 30.x и 31.x. KernelSU и APatch не тестировались |
+| Android | проверено на Android 15–16 |
+| Архитектура | `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`. Установщик выбирает бинарник по `$ARCH` устройства |
+| Ядро | `iptables` с таблицей `nat`. `ip6tables nat` желателен, но не обязателен (см. [IPv6](#ipv6)) |
+| Приложение | Android 12 и новее, root-доступ |
+
+Один zip подходит для всех четырёх архитектур, включая эмуляторы Android Studio (x86_64).
 
 ## Установка
 
-Собрать zip и прошить в Magisk → Modules → Install from storage:
+1. Скачать `dnscrypt-proxy-android-<версия>.zip` со [страницы релизов](https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/latest).
+2. Magisk → Модули → Установить из хранилища → выбрать zip.
+3. Перезагрузить устройство.
+4. Проверить работу: `su -c dnscrypt-ctl test`.
+
+При обновлении существующий `dnscrypt-proxy.toml` сохраняется, новая версия
+конфига кладётся рядом как `dnscrypt-proxy.toml.new`, прежняя копируется в `.bak`.
+Обновления модуля приходят через Magisk (`updateJson` в `module.prop`).
+
+### Сборка из исходников
 
 ```sh
-./build.sh          # все архитектуры: arm64 из репозитория, arm/i386/x86_64 докачиваются
+./build.sh          # все архитектуры: arm64 из репозитория, arm/i386/x86_64 загружаются с GitHub dnscrypt-proxy
 ./build.sh --arm64  # только arm64
 ```
 
-Либо взять готовый `dnscrypt-proxy-android-<версия>.zip` со страницы релизов.
+Для упаковки используется `zip`. Если его нет, используются Python `zipfile`, `7z` или `jar` из JDK.
+CI ([.github/workflows/build.yml](.github/workflows/build.yml)) проверяет скрипты
+`shellcheck`, собирает zip, проверяет наличие всех четырёх бинарников и при push тега
+прикладывает zip к релизу.
 
-## Приложение-менеджер
+## Файлы и каталоги
 
-`DNSCryptManager-<версия>.apk` в том же релизе. Требует Android 12+ и root;
-модуль не устанавливает и не собирает — работает через `dnscrypt-ctl`.
+| Путь | Содержимое |
+|---|---|
+| `/data/adb/dnscrypt-proxy/dnscrypt-proxy.toml` | конфиг dnscrypt-proxy |
+| `/data/adb/dnscrypt-proxy/module.conf` | параметры модуля |
+| `/data/adb/dnscrypt-proxy/*.txt` | `blocked-names`, `blocked-ips`, `allowed-names`, `allowed-ips`, `exclude-ips` |
+| `/data/adb/dnscrypt-proxy/public-resolvers.md` | кэш списка резолверов, загружается и проверяется подписью minisign самим dnscrypt-proxy |
+| `/system/bin/dnscrypt-proxy`, `/system/bin/dnscrypt-ctl` | бинарники, монтируются Magisk |
 
-* состояние прокси, время работы, порт, наличие правил перехвата, режим IPv6;
-* проверка резолвинга UDP-запросом на `127.0.0.1:<порт>` — без root, ровно так,
-  как это видит обычное приложение;
-* выбор резолверов из кэша `public-resolvers.md` с поиском и фильтрами
-  по протоколу, DNSSEC, логированию и фильтрации;
-* правка `module.conf` и `dnscrypt-proxy.toml` с резервными копиями и откатом;
-* журналы модуля и прокси, вывод `rules` и `conflicts`;
-* плитка в шторке для быстрого включения.
+Каталог имеет права `0700`. Во внутренней памяти (`/storage/emulated/0`) модуль ничего
+не хранит, поэтому конфиг доступен до первой разблокировки после загрузки (FBE).
 
-## Настройка
+## Параметры модуля
 
-* Конфиг: `/data/adb/dnscrypt-proxy/dnscrypt-proxy.toml`
-* На внутренней памяти модуль ничего не хранит: всё лежит в `/data/adb`,
-  как у остальных модулей. Правка — через приложение или root-редактором.
-* Параметры модуля: `/data/adb/dnscrypt-proxy/module.conf`
+`/data/adb/dnscrypt-proxy/module.conf`. Изменение: `dnscrypt-ctl set <ключ> <значение>`,
+затем `dnscrypt-ctl restart`. Сброс всех параметров: `dnscrypt-ctl reset`.
 
-| ключ | значения | смысл |
-|---|---|---|
-| `autostart` | `true` / `false` | подниматься при загрузке; `false` оставляет модуль установленным, но спящим |
-| `redirect_ipv4` | `true` / `false` | перехват IPv4 DNS, основной режим |
-| `redirect_ipv6` | `auto` / `redirect` / `off` | перехват IPv6 DNS; без `ip6tables nat` DNS на IPv6-адреса блокируется, и система уходит на IPv4 (`auto` — только пока есть IPv4) |
-| `tether_redirect` | `true` / `false` | заворачивать DNS клиентов хотспота |
-| `disable_private_dns` | `true` / `false` | системный Private DNS ходит по DoT мимо порта 53 |
-| `restart_delay_max` | 5…600 секунд | потолок паузы между перезапусками упавшего прокси |
-| `run_gid` | имя группы, GID или пусто | первичная группа процесса, нужна рядом с box_for_magisk |
+| Ключ | Значения | По умолчанию | Назначение |
+|---|---|---|---|
+| `autostart` | `true` / `false` | `true` | запуск при загрузке. `false`: модуль остаётся установленным, при загрузке ничего не запускается |
+| `redirect_ipv4` | `true` / `false` | `true` | перехват IPv4 DNS (порт 53) |
+| `redirect_ipv6` | `auto` / `redirect` / `off` | `auto` | перехват IPv6 DNS, см. [IPv6](#ipv6) |
+| `tether_redirect` | `true` / `false` | `false` | перехват DNS клиентов точки доступа и USB-модема (`PREROUTING`) |
+| `disable_private_dns` | `true` / `false` | `true` | отключение системного Private DNS (DoT на порт 853 не перехватывается). Исходный режим восстанавливается при `stop` и удалении модуля |
+| `restart_delay_max` | 5…600 | `60` | максимальная пауза между перезапусками упавшего прокси, секунды |
+| `run_gid` | пусто, имя группы или GID | пусто | первичная группа процесса dnscrypt-proxy. Экспериментальный параметр, нужен только при цепочке с box_for_magisk |
 
-Адреса из `bootstrap_resolvers` и `netprobe_address` (по умолчанию 9.9.9.9, 1.1.1.1,
-8.8.8.8) и из `exclude-ips.txt` в перехват не попадают, иначе прокси завернёт сам себя.
-Значит, приложение, которое само шлёт DNS прямо на эти адреса, пройдёт мимо прокси.
-Если это важно, укажите в bootstrap адреса, которыми приложения не пользуются.
+Значения проверяются при `set`, недопустимые отклоняются.
 
-`dnscrypt-ctl test` проверяет главное: резолвит уникальное имя системным резолвером
-и смотрит, дошёл ли запрос до перехвата. Строка `IPv6 DNS` в `status` (и поле
-`ipv6_dns` в `json`: `redirected` / `blocked` / `bypass`) показывает, не идёт ли
-DNS мимо прокси по IPv6.
+Конфиг dnscrypt-proxy по умолчанию слушает `127.0.0.1:5354` и `[::1]:5354`.
+Список `server_names` пуст, поэтому серверы выбираются автоматически по фильтрам
+`require_dnssec`, `require_nolog`, `require_nofilter` (все `true`) со стратегией балансировки `p2`.
 
-По умолчанию `server_names` пуст — прокси сам выбирает серверы по фильтрам
-`require_dnssec` / `require_nolog` / `require_nofilter`.
+## Управление: dnscrypt-ctl
 
-## Управление
+Требует root (`su -c dnscrypt-ctl …`).
 
 ```
-dnscrypt-ctl status      # состояние, порт, наличие правил
-dnscrypt-ctl json        # то же машиночитаемо
-dnscrypt-ctl restart     # перечитать конфиг
-dnscrypt-ctl log         # журнал модуля
-dnscrypt-ctl proxylog    # журнал dnscrypt-proxy
-dnscrypt-ctl rules       # цепочка DNSCRYPT
-dnscrypt-ctl conflicts   # кто ещё перехватывает порт 53
-dnscrypt-ctl set redirect_ipv6 off
+dnscrypt-ctl status            # состояние процесса, порт, правила IPv4/IPv6, Private DNS
+dnscrypt-ctl json              # то же в JSON (используется приложением)
+dnscrypt-ctl start | stop | restart
+dnscrypt-ctl test              # резолвит уникальное имя системным резолвером и проверяет счётчики DNAT
+dnscrypt-ctl rules             # цепочки nat/DNSCRYPT для IPv4 и IPv6
+dnscrypt-ctl conflicts         # другие перехватчики порта 53, процессы на порту прокси
+dnscrypt-ctl log [N]           # журнал модуля
+dnscrypt-ctl proxylog [N]      # журнал dnscrypt-proxy
+dnscrypt-ctl set <ключ> <значение>
+dnscrypt-ctl reset             # module.conf к значениям по умолчанию, с резервной копией
 
-dnscrypt-ctl servers info      # где кэш резолверов, сколько их, что выбрано
-dnscrypt-ctl servers list      # имена всех серверов из кэша
-dnscrypt-ctl servers get       # текущий выбор или auto
-dnscrypt-ctl servers set a,b   # задать список
-dnscrypt-ctl servers add имя   # добавить один
-dnscrypt-ctl servers remove имя
-dnscrypt-ctl servers auto      # вернуть автоподбор по фильтрам require_*
-dnscrypt-ctl servers active    # какой сервер выбран прокси сейчас
+dnscrypt-ctl servers info      # кэш резолверов, количество, текущий выбор
+dnscrypt-ctl servers list      # имена серверов из кэша
+dnscrypt-ctl servers relays    # релеи Anonymized DNSCrypt
+dnscrypt-ctl servers get       # server_names или auto
+dnscrypt-ctl servers set a,b   # задать server_names
+dnscrypt-ctl servers add|remove <имя>
+dnscrypt-ctl servers auto      # очистить server_names, выбор по фильтрам require_*
+dnscrypt-ctl servers active    # серверы, выбранные прокси в данный момент
+dnscrypt-ctl servers live      # JSON: стратегия, число живых серверов, RTT каждого
+dnscrypt-ctl servers excluded [list]   # disabled_server_names
+dnscrypt-ctl servers exclude|include a,b
 ```
 
-Список резолверов качает и проверяет подписью minisign сам dnscrypt-proxy;
-`servers` только читает этот кэш (`public-resolvers.md`) и правит `server_names`
-в конфиге, каждый раз делая резервную копию. Изменения применяются после `restart`.
+`stop` сохраняется между перезагрузками: остановленный вручную прокси не запускается
+при загрузке и при `restart` до следующего `start`. Перед каждой записью в
+`dnscrypt-proxy.toml` создаётся резервная копия. Изменения конфига применяются после `restart`.
+
+## Как это работает
+
+* `post-fs-data.sh` подготавливает `/data/adb/dnscrypt-proxy`. Сеть на этом этапе не затрагивается.
+* `service.sh` запускает `scripts/supervisor.sh`, если `autostart=true` и нет флага ручной остановки.
+* Супервизор:
+  * дожидается готовности iptables;
+  * включает `route_localnet`;
+  * строит цепочку `nat/DNSCRYPT`: исключения, затем DNAT `udp/tcp :53` на `127.0.0.1:5354`;
+  * подключает цепочку к `OUTPUT` и запускает dnscrypt-proxy;
+  * перезапускает упавший прокси с экспоненциальной паузой (5 с … `restart_delay_max`);
+  * каждые 30 с проверяет, что правила на месте. Если netd их удалил, правила восстанавливаются.
+* Из перехвата исключаются адреса `bootstrap_resolvers`, `netprobe_address` и `exclude-ips.txt`,
+  иначе прокси перехватывал бы собственные запросы. Приложение, которое само отправляет DNS
+  на эти адреса (по умолчанию 9.9.9.9, 1.1.1.1, 8.8.8.8), проходит мимо прокси.
+  Если это критично, в `bootstrap_resolvers` следует указать адреса, которые приложения не используют.
+* Private DNS отключается после `sys.boot_completed`, исходный режим сохраняется.
+* Раздача Wi-Fi не затрагивается: IPv6 глобально не отключается, `FORWARD` не изменяется,
+  `PREROUTING` используется только при `tether_redirect=true`.
+
+### IPv6
+
+| Ядро | `auto` | `redirect` | `off` |
+|---|---|---|---|
+| есть `ip6tables nat` | DNAT на `[::1]:5354` | DNAT на `[::1]:5354` | IPv6 DNS идёт мимо прокси |
+| нет `ip6tables nat` | REJECT DNS на IPv6-адреса в `filter/OUTPUT`, пока есть IPv4-маршрут | REJECT всегда | IPv6 DNS идёт мимо прокси |
+
+Резолвер Android после REJECT переходит на IPv4 DNS, который перехватывается.
+В сети только с IPv6 режим `auto` снимает блокировку, чтобы DNS не пропал полностью.
+Текущее состояние: строка `IPv6 DNS` в `status`, поле `ipv6_dns` в `json`
+(`redirected` / `blocked` / `bypass`).
 
 ## Совместимость с другими модулями
 
-Проверено по исходникам: `dnscrypt-ctl conflicts` покажет картину на конкретном устройстве.
+`dnscrypt-ctl conflicts` показывает фактическое состояние на устройстве.
 
-**[magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2) — совместим.**
-Он работает в таблице `mangle` (цепочки `ZAPRET2_OUT`/`ZAPRET2_IN`, действие `NFQUEUE`),
-а мы — в `nat`. Пересечений по портам нет: ни один из 98 пресетов не фильтрует 53,
-только TCP 80/443 и UDP из верхних диапазонов. Единственное касание — если DNSCrypt-сервер
-слушает UDP-порт из диапазона `443-65535`, трафик прокси пройдёт через NFQUEUE;
-десинхронизации он не подвергнется, потому что `--dpi-desync-any-protocol` не включён
-ни в одном пресете, а на DNSCrypt-пакетах сигнатуры TLS/QUIC не срабатывают.
+### box_for_magisk
 
-**[box_for_magisk](https://github.com/taamarin/box_for_magisk) — конфликтует за порт 53.**
-С ядром clash он ставит `-I OUTPUT -j CLASH_DNS_LOCAL` в `nat` и заворачивает `udp:53`
-на свой порт 1053; с другими ядрами забирает 53 в `mangle` через TPROXY. Стартует он
-после загрузочной анимации, то есть позже нас, а `-I` вставляет правило в начало цепочки —
-значит DNS достаётся ему, а наш перехват простаивает. Два перехватчика одновременно
-держать нельзя. Рабочая схема — отдать перехват box, а нас сделать его резолвером:
+[box_for_magisk](https://github.com/taamarin/box_for_magisk) тоже перехватывает DNS:
+с ядром clash через `nat/CLASH_DNS_LOCAL` (порт 1053), с остальными ядрами через TPROXY в `mangle`.
+Два перехватчика порта 53 одновременно не работают. Поддерживаются две схемы.
+
+**Переключение.** Оба модуля включены в Magisk, активен один из них. Переключение
+выполняется кнопками Start/Stop в приложениях (DNSCrypt Manager и Box) или командами
+`dnscrypt-ctl stop` / `start`. Остановка dnscrypt-proxy снимает правила, восстанавливает
+Private DNS и сохраняется после перезагрузки. Box в режиме tproxy не забирает
+порт 53 (`BOX_LOCAL` возвращает его), такая конфигурация распознаётся `conflicts` и полем `box_dns`.
+
+Собственный dnscrypt-proxy в составе Box тоже может слушать порт 5354. Модуль
+отслеживает свой процесс по пути бинарника, а не по имени, поэтому процессы не путаются.
+Занятый порт отображается в `status` и `conflicts`.
+
+**Цепочка.** DNS перехватывает box, dnscrypt-proxy работает как его вышестоящий резолвер:
 
 ```sh
 dnscrypt-ctl set redirect_ipv4 false
@@ -127,98 +178,89 @@ dnscrypt-ctl set run_gid net_admin
 dnscrypt-ctl restart
 ```
 
-и в конфиге clash/sing-box указать сервером `127.0.0.1:5354`. Тогда системный DNS
-забирает box, а шифрует его наш прокси.
-
-Готовый блок для `/data/adb/box/clash/config.yaml`:
+Блок для `/data/adb/box/clash/config.yaml`:
 
 ```yaml
 dns:
   enable: true
-  listen: 0.0.0.0:1053        # отсюда box берёт порт; строка должна быть одна
+  listen: 0.0.0.0:1053
   ipv6: false
-  enhanced-mode: fake-ip      # redir-host - если через dnscrypt должен идти весь DNS
+  enhanced-mode: fake-ip      # redir-host, если через dnscrypt-proxy должен идти весь DNS
   fake-ip-range: 198.18.0.1/16
-  fake-ip-filter:
-    - '*.lan'
-    - '*.local'
-    - '+.pool.ntp.org'
-    - 'time.*.com'
-  default-nameserver:
-    - 127.0.0.1:5354
-  nameserver:
-    - 127.0.0.1:5354
-  proxy-server-nameserver:
-    - 127.0.0.1:5354
+  fake-ip-filter: ['*.lan', '*.local', '+.pool.ntp.org', 'time.*.com']
+  default-nameserver: [127.0.0.1:5354]
+  nameserver: [127.0.0.1:5354]
+  proxy-server-nameserver: [127.0.0.1:5354]
   fallback: []
 ```
 
-`fallback` обязательно пустой: иначе часть запросов уйдёт мимо dnscrypt-proxy напрямую.
-`proxy-server-nameserver` тоже указывает на нас, иначе адреса прокси-серверов
-резолвятся системным DNS и запрос возвращается в clash по кругу.
+* `fallback` должен быть пустым, иначе часть запросов уходит напрямую.
+* `proxy-server-nameserver` указывает на dnscrypt-proxy, иначе адреса прокси-серверов
+  резолвятся системным DNS и запрос возвращается в clash по кругу.
+* `run_gid=net_admin` выводит запросы dnscrypt-proxy к резолверам из-под перехвата box:
+  box пропускает трафик владельца `root:net_admin`.
+* При `fake-ip` через dnscrypt-proxy идут direct-домены и адреса прокси-серверов.
+* При `redir-host` через dnscrypt-proxy идёт весь DNS ценой задержки первого соединения.
 
-Что даёт `enhanced-mode`: при `fake-ip` через dnscrypt-proxy идут только direct-домены
-и адреса прокси-серверов, а проксируемые домены резолвятся на выходной ноде.
-При `redir-host` через него проходит весь DNS, но каждое соединение ждёт реального
-резолва — заметно медленнее на первом обращении к домену.
+### magisk-zapret2
 
-`run_gid=net_admin` нужен потому, что box пропускает мимо своего перехвата трафик
-с владельцем `root:net_admin` — иначе запросы самого dnscrypt-proxy к резолверам
-пойдут через прокси box и сломаются, если тот не умеет UDP.
+[magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2) совместим.
+Он работает в таблице `mangle` (`ZAPRET2_OUT` / `ZAPRET2_IN`, `NFQUEUE`) и в пресетах
+не фильтрует порт 53. Если DNSCrypt-сервер слушает UDP-порт из диапазона `443-65535`,
+пакеты прокси проходят через NFQUEUE без десинхронизации: `--dpi-desync-any-protocol`
+в пресетах не включён.
 
-При `ipv6="false"` box добавляет `ip6tables -A OUTPUT -p udp --dport 53 -j DROP`,
-так что перехват IPv6 с его стороны всё равно не нужен.
+## DNSCrypt Manager
 
-## Как это работает
+Приложение (`DNSCryptManager-<версия>.apk` в релизе) управляет модулем через
+`dnscrypt-ctl` и не устанавливает модуль самостоятельно.
 
-`post-fs-data.sh` только готовит `/data/adb/dnscrypt-proxy`. Сеть трогает
-`service.sh` → `scripts/supervisor.sh`: дожидается iptables, строит цепочку
-`nat/DNSCRYPT` (исключения → DNAT :53 на `127.0.0.1:5354`), привязывает её к
-`OUTPUT`, запускает прокси и следит за ним, раз в 30 с проверяя, что правила на месте.
-Private DNS выключается после `sys.boot_completed` — в recovery `settings` недоступен.
+* **Статус:**
+  * состояние прокси и время работы, кнопки Start/Stop;
+  * проверка DNS: какие резолверы видит внешний сервис, есть ли утечка;
+  * текущий сервер и RTT;
+  * версия модуля и проверка обновлений;
+  * предупреждения при отсутствии правил перехвата, утечке по IPv6 или включённом Private DNS.
+* **Серверы:**
+  * выбор из `public-resolvers.md` с поиском и фильтрами по протоколу, DNSSEC, логированию и фильтрации;
+  * исключение серверов по стране. Страна определяется по описанию сервера и базе GeoIP, для неопределённых её можно указать вручную.
+* **Блокировка:**
+  * подключаемые блок-листы (HaGeZi, OISD, произвольный URL) с ежедневным обновлением;
+  * блокировка и разрешение доменов из журнала.
+* **Настройки:**
+  * все параметры `module.conf`, применяются с перезапуском только если прокси запущен;
+  * редактор `dnscrypt-proxy.toml` с резервными копиями;
+  * обновление модуля из релиза.
+* **Журналы:** журналы модуля и прокси, правила, конфликты, режим Live.
+* **Интерфейс:** 12 языков (en, ru, uk, be, kk, es, fr, it, pt, de, pl, tr), масштаб интерфейса 80–120%, плитка быстрых настроек.
 
-## Что здесь переписано
+## Изменения относительно исходного модуля
 
-Апстрим d3cim заброшен в феврале 2024 года. От него остались идея и структура
-Magisk-модуля; ниже — что было исправлено и заменено своим кодом.
+Модуль основан на заброшенном в 2024 году [d3cim/dnscrypt-proxy-android](https://github.com/d3cim/dnscrypt-proxy-android).
+Скрипты переписаны:
 
-| Проблема | Что было | Что стало |
-|---|---|---|
-| Разряд батареи | `while ! [ \`pgrep -x dnscrypt-proxy\` ]` c `&& sleep 15`: пауза срабатывала только при выходе с кодом 0, упавший прокси перезапускался без пауз | `scripts/supervisor.sh` с экспоненциальной паузой 5→60 с, журналом и сбросом задержки после 2 минут работы |
-| Не стартует до разблокировки | конфиг лежал на `/storage/emulated/0`, недоступном при FBE | всё в `/data/adb/dnscrypt-proxy`, на общей памяти модуль не хранит ничего |
-| Ломалась раздача Wi-Fi ([#7](https://github.com/d3cim/dnscrypt-proxy-android/issues/7)) | глобальное отключение IPv6 через `resetprop` + правила в `post-fs-data`, до старта netd | IPv6 не трогаем, правила ставятся в `late_start` и переставляются, если netd их снёс |
-| Мусор после удаления ([#1](https://github.com/d3cim/dnscrypt-proxy-android/issues/1)) | `while [ boot != 1 ] && [ ! -d ... ]` — выход по любому из условий, `rm` по несмонтированным путям | корректное ожидание, снятие правил, остановка процесса, резервная копия конфига |
-| Петля/обрыв DNS при смене резолвера | из перехвата исключался один захардкоженный IP | исключения собираются из `bootstrap_resolvers`, `netprobe_address` и `exclude-ips.txt` |
-| DNAT молча не работал | не выставлялся `route_localnet` | `net.ipv4.conf.*.route_localnet=1` с восстановлением при удалении |
-| Дубликаты правил | `iptables -A` при каждом запуске | своя цепочка `nat/DNSCRYPT`, проверка `-C` перед вставкой |
-| Устаревший прокси | dnscrypt-proxy 2.1.5 (август 2023) | 2.1.18 (июль 2026), включая PQDNSCrypt |
-| Нечем управлять | правка файлов вручную | `dnscrypt-ctl` и приложение-менеджер |
+| Проблема исходного модуля | Решение |
+|---|---|
+| упавший прокси перезапускался без пауз и разряжал батарею | супервизор с экспоненциальной паузой и журналом |
+| конфиг на `/storage/emulated/0` недоступен до разблокировки (FBE) | всё хранится в `/data/adb/dnscrypt-proxy` |
+| глобальное отключение IPv6 ломало раздачу Wi-Fi ([#7](https://github.com/d3cim/dnscrypt-proxy-android/issues/7)) | IPv6 не отключается, правила ставятся в `late_start` и восстанавливаются после netd |
+| файлы оставались после удаления ([#1](https://github.com/d3cim/dnscrypt-proxy-android/issues/1)) | удаление снимает правила, останавливает процесс, восстанавливает Private DNS |
+| из перехвата исключался один фиксированный IP | исключения из `bootstrap_resolvers`, `netprobe_address`, `exclude-ips.txt` |
+| DNAT на 127.0.0.1 не работал без `route_localnet` | `route_localnet=1` с восстановлением при удалении |
+| дубликаты правил при каждом запуске | отдельная цепочка `nat/DNSCRYPT`, проверка `-C` перед вставкой |
+| dnscrypt-proxy 2.1.5 (2023) | 2.1.18, включая PQDNSCrypt |
+
+История версий: [CHANGELOG.md](CHANGELOG.md).
 
 ## Благодарности
 
-Проект стоит на чужой работе, и это стоит назвать поимённо.
-
-* **[Frank Denis (jedisct1)](https://github.com/jedisct1)** и участники
-  [DNSCrypt/dnscrypt-proxy](https://github.com/DNSCrypt/dnscrypt-proxy) — сам прокси,
-  протокол DNSCrypt v2, Anonymized DNSCrypt и подписанные списки резолверов.
-  Модуль лишь доставляет его на Android и включает в системный DNS-путь.
-* **[d3cim](https://github.com/d3cim)** и
-  [d3cim/dnscrypt-proxy-android](https://github.com/d3cim/dnscrypt-proxy-android) —
-  исходный Magisk-модуль, с которого всё начиналось. Скрипты с тех пор переписаны,
-  но структура пакета и первоначальная идея — оттуда.
-* **[topjohnwu](https://github.com/topjohnwu)** —
-  [Magisk](https://github.com/topjohnwu/Magisk), без которого модуля бы не было,
-  и [libsu](https://github.com/topjohnwu/libsu), на которой держится root-слой
-  приложения-менеджера.
-* **[taamarin](https://github.com/taamarin)** и
-  [box_for_magisk](https://github.com/taamarin/box_for_magisk) — по его исходникам
-  разобрана схема совместного существования на порту 53.
-* Команда **[magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2)** —
-  пресеты и код, по которым проверялось отсутствие конфликта в `mangle`.
-* **[DNSCrypt community](https://github.com/DNSCrypt)** — публичный список резолверов
-  `public-resolvers.md` и его подписи minisign.
+* [Frank Denis (jedisct1)](https://github.com/jedisct1) и участники [DNSCrypt/dnscrypt-proxy](https://github.com/DNSCrypt/dnscrypt-proxy): прокси, протокол DNSCrypt v2, Anonymized DNSCrypt.
+* [DNSCrypt](https://github.com/DNSCrypt): список резолверов `public-resolvers.md` и его подписи minisign.
+* [d3cim/dnscrypt-proxy-android](https://github.com/d3cim/dnscrypt-proxy-android): исходная структура Magisk-модуля.
+* [topjohnwu](https://github.com/topjohnwu): [Magisk](https://github.com/topjohnwu/Magisk) и [libsu](https://github.com/topjohnwu/libsu).
+* [taamarin/box_for_magisk](https://github.com/taamarin/box_for_magisk) и [magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2): исходники, по которым проверялась совместимость.
+* [DB-IP](https://db-ip.com): база IP to Country Lite (CC BY 4.0), используется приложением.
 
 ## Лицензия
 
-[GNU GPL v3](LICENSE.md), как и у апстрима. Конфигурационные файлы в `config/`
-сохраняют [лицензию dnscrypt-proxy](config/LICENSE) (ISC).
+[GNU GPL v3](LICENSE.md). Файлы в `config/` распространяются под [лицензией dnscrypt-proxy](config/LICENSE) (ISC).
