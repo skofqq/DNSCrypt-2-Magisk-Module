@@ -193,7 +193,8 @@ case "$1" in
   rules)
     nf_init_cmd
     $IPT -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null || echo "цепочки нет"
-    $IPT6 -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null
+    $IPT6 -t nat -L $NAT_CHAIN -n --line-numbers 2>/dev/null \
+      || echo "IPv6: цепочки нет (в ядре может не быть ip6tables nat)"
     ;;
   log)      tail -n "${2:-50}" "$LOGFILE" 2>/dev/null || { echo "журнала нет"; exit 1; } ;;
   proxylog) tail -n "${2:-50}" "$DATADIR/dnscrypt-proxy.log" 2>/dev/null \
