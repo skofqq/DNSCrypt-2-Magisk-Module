@@ -1,0 +1,57 @@
+# Проверка скриптов и сборка установочного zip со всеми архитектурами.
+# На тег вида 2.4.1 собранный zip прикладывается к релизу - так в релиз
+# больше не попадёт пакет с одним arm64, как случилось с 2.4.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['[0-9]*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          shellcheck -S warning customize.sh post-fs-data.sh service.sh uninstall.sh scripts/*.sh tools/dnscrypt-ctl
+          shellcheck -s bash -S warning build.sh
+
+      - name: Версия в module.prop совпадает с тегом
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(sed -n 's/^version=//p' module.prop)
+          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "module.prop: $v, тег: ${GITHUB_REF_NAME}"; exit 1; }
+
+      - name: Сборка zip
+        run: bash build.sh
+
+      - name: Проверка содержимого
+        run: |
+          zip=$(ls dnscrypt-proxy-android-*.zip)
+          for a in arm arm64 i386 x86_64; do
+            unzip -l "$zip" | grep -q "binary/dnscrypt-proxy-$a$" || { echo "нет бинарника $a"; exit 1; }
+          done
+          unzip -l "$zip" | grep -q 'META-INF/com/google/android/update-binary'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: dnscrypt-proxy-android-*.zip
+
+      - name: Приложить к релизу
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip=$(ls dnscrypt-proxy-android-*.zip)
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "DNSCrypt-Proxy 2 — $GITHUB_REF_NAME" --notes "См. CHANGELOG.md"
+          gh release upload "$GITHUB_REF_NAME" "$zip" --clobber
