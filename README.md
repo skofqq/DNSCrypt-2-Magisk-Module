@@ -206,6 +206,27 @@ dns:
 * При `fake-ip` через dnscrypt-proxy идут direct-домены и адреса прокси-серверов.
 * При `redir-host` через dnscrypt-proxy идёт весь DNS ценой задержки первого соединения.
 
+### Boxy
+
+[Boxy](https://github.com/skofqq/Boxy) — приложение для управления Box for Root
+(`/data/adb/box`) с собственной сборкой модуля. Совместимость проверена на устройстве
+с включёнными в Magisk обоими модулями.
+
+* **Переключение.** DNS-перехват включается кнопкой Start в одном приложении после Stop в другом:
+  Stop в Boxy и Start в Shieldy, или наоборот. Остановка в Shieldy сохраняется после перезагрузки.
+  Чтобы после перезагрузки не запускался Box, в Boxy выключается «Запуск при загрузке»
+  (файл `/data/adb/box/manual`).
+* **Встроенный DNSCrypt Boxy** (Tools → DNS) запускает отдельный dnscrypt-proxy из
+  `/data/adb/box/bin` с конфигом `/data/adb/box/dnscrypt` в роли вышестоящего DNS ядра.
+  Он может слушать тот же порт 5354, что и этот модуль. Одновременно должен работать
+  только один из них: занятый порт показывают `dnscrypt-ctl status` и `conflicts`.
+  Процессы не путаются, модуль отслеживает свой dnscrypt-proxy по пути бинарника.
+* **Цепочка** (Box перехватывает DNS, этот модуль шифрует) настраивается так же, как для
+  box_for_magisk выше. Встроенный DNSCrypt Boxy при этом выключается.
+* В режиме tproxy Box без перехвата DNS не забирает порт 53 (`BOX_LOCAL` возвращает его),
+  и `conflicts` не считает его конкурентом. Если в Boxy включён DNS hijack, `conflicts`
+  и поле `box_dns` в `json` показывают, что DNS забирает Box.
+
 ### magisk-zapret2
 
 [magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2) совместим.
@@ -265,7 +286,7 @@ dns:
 * [DNSCrypt](https://github.com/DNSCrypt): список резолверов `public-resolvers.md` и его подписи minisign.
 * [d3cim/dnscrypt-proxy-android](https://github.com/d3cim/dnscrypt-proxy-android): исходная структура Magisk-модуля.
 * [topjohnwu](https://github.com/topjohnwu): [Magisk](https://github.com/topjohnwu/Magisk) и [libsu](https://github.com/topjohnwu/libsu).
-* [taamarin/box_for_magisk](https://github.com/taamarin/box_for_magisk) и [magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2): исходники, по которым проверялась совместимость.
+* [taamarin/box_for_magisk](https://github.com/taamarin/box_for_magisk), [Boxy](https://github.com/skofqq/Boxy) и [magisk-zapret2](https://git.zapret.moe/zapretdiscordyoutube/magisk-zapret2): исходники, по которым проверялась совместимость.
 * [DB-IP](https://db-ip.com): база IP to Country Lite (CC BY 4.0), используется приложением.
 
 ## Лицензия
