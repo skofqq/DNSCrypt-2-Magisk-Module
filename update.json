@@ -1,6 +1,6 @@
 {
-    "version": "2.4",
-    "versionCode": 240000,
-    "zipUrl": "https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/download/2.4/dnscrypt-proxy-android-2.4.zip",
+    "version": "2.4.1",
+    "versionCode": 241000,
+    "zipUrl": "https://github.com/skofqq/DNSCrypt-2-Magisk-Module/releases/download/2.4.1/dnscrypt-proxy-android-2.4.1.zip",
     "changelog": "https://raw.githubusercontent.com/skofqq/DNSCrypt-2-Magisk-Module/main/CHANGELOG.md"
 }
