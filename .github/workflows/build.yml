@@ -31,11 +31,14 @@ jobs:
           [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "module.prop: $v, тег: ${GITHUB_REF_NAME}"; exit 1; }
 
       - name: Сборка zip
-        run: bash build.sh
+        run: |
+          bash build.sh
+          # в репозитории лежит старый zip 2.1.18-r1, поэтому имя берём по версии
+          echo "ZIP=dnscrypt-proxy-android-$(sed -n 's/^version=//p' module.prop).zip" >> "$GITHUB_ENV"
 
       - name: Проверка содержимого
         run: |
-          zip=$(ls dnscrypt-proxy-android-*.zip)
+          zip="$ZIP"
           for a in arm arm64 i386 x86_64; do
             unzip -l "$zip" | grep -q "binary/dnscrypt-proxy-$a$" || { echo "нет бинарника $a"; exit 1; }
           done
@@ -44,14 +47,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: module-zip
-          path: dnscrypt-proxy-android-*.zip
+          path: ${{ env.ZIP }}
 
       - name: Приложить к релизу
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          zip=$(ls dnscrypt-proxy-android-*.zip)
+          zip="$ZIP"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "DNSCrypt-Proxy 2 — $GITHUB_REF_NAME" --notes "См. CHANGELOG.md"
           gh release upload "$GITHUB_REF_NAME" "$zip" --clobber
